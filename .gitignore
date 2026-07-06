@@ -1,0 +1,10 @@
+.vs/
+build/
+out/
+*.user
+*.autosave
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
