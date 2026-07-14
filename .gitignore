@@ -1,6 +1,9 @@
 .vs/
 build/
 out/
+.qtcreator/
+.vs/
+data/
 *.user
 *.autosave
 *.obj
