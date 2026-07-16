@@ -5,6 +5,8 @@
 
 #include <QTimer>
 
+// Development-only simulated device. It is intentionally kept separate from
+// the production RV1126B transport and session interfaces.
 class MockDeviceClient final : public IDeviceClient
 {
     Q_OBJECT

@@ -11,7 +11,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Test)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Test)
 
 qt_add_executable(CameraManagerApp
     src/main.cpp
@@ -31,6 +31,21 @@ qt_add_executable(CameraManagerApp
     src/models/table_models/DevicePropertyModel.h
     src/models/table_models/DeviceTableModel.cpp
     src/models/table_models/DeviceTableModel.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/ports/IRtspPlayer.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/protocol/ApiCodec.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceFleetService.h
+    src/rv1126b/services/DeviceSession.h
+    src/rv1126b/services/EventSyncService.h
+    src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/services/FtpService.h
     src/services/DeviceManager.cpp
     src/services/DeviceManager.h
     src/services/CaptureRecordService.cpp
@@ -55,6 +70,7 @@ target_link_libraries(CameraManagerApp
     PRIVATE
         Qt6::Widgets
         Qt6::Sql
+        Qt6::Network
 )
 
 enable_testing()
@@ -172,6 +188,40 @@ target_compile_definitions(DeviceManagerTest
 )
 
 add_test(NAME DeviceManagerTest COMMAND DeviceManagerTest)
+
+qt_add_executable(Rv1126bArchitectureTypesTest
+    tests/Rv1126bArchitectureTypesTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/ports/IRtspPlayer.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/protocol/ApiCodec.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceFleetService.h
+    src/rv1126b/services/DeviceSession.h
+    src/rv1126b/services/EventSyncService.h
+    src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/services/FtpService.h
+)
+
+target_link_libraries(Rv1126bArchitectureTypesTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Test
+)
+
+target_compile_options(Rv1126bArchitectureTypesTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME Rv1126bArchitectureTypesTest COMMAND Rv1126bArchitectureTypesTest)
 
 target_compile_options(CameraManagerApp
     PRIVATE

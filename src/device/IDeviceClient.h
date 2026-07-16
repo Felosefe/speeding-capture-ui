@@ -8,6 +8,8 @@
 #include <QObject>
 #include <QString>
 
+// Legacy synchronous abstraction used by MockDeviceClient and development-mode
+// tests. Real RV1126B integration lives under src/rv1126b and is asynchronous.
 class IDeviceClient : public QObject
 {
     Q_OBJECT
