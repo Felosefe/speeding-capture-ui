@@ -354,12 +354,13 @@ Token 只能放入 Authorization header，不能进入 URL、普通日志或 Git
 统一状态：Idle、Opening、Playing、Reconnecting、Stopped、Error。端口只冻结 open、stop、state、
 outputWidget 和状态/错误信号，不暴露具体解码帧类型。
 
-阶段 0 首选候选为 Qt 6.11.1 Multimedia 的 FFmpeg 后端，独立验证入口为
-`Rv1126bRtspSpike`。该工具复用本节接口，负责首帧超时、卡流检测、退避重连和状态上报；Qt
-Multimedia 对象留在 GUI 线程，实际解码线程由媒体后端创建和回收。最终后端必须在真机
-`/live/0`、`/live/1` 完成连续播放、停止、重连、资源和部署验证后冻结。在验证报告通过前，
-此候选不得标记为正式选型；若失败则用外部 FFmpeg/libav 运行同一矩阵。无论最终选择哪个后端，
-不得改变 UI 对 `IRtspPlayer` 的依赖方式。
+正式后端冻结为 Qt 6.11.1 Multimedia 的 FFmpeg backend，独立验证入口为
+`Rv1126bRtspSpike`。正式 `QtMultimediaRtspPlayer` 与 spike 共用一套实现，负责首帧超时、卡流检测、
+退避重连、状态上报和播放代次隔离；Qt Multimedia 对象、计时器和状态机留在 GUI 线程，实际解码线程
+由媒体后端创建和回收。公共调用必须发生在播放器所属线程，跨线程消费者使用 queued signal；UI 仍只
+依赖 `IRtspPlayer`。固定错误码为 `invalid_rtsp_spec`、`rtsp_open_timeout`、
+`rtsp_frame_stalled`、`rtsp_authentication_failed`、`rtsp_format_unsupported` 和
+`rtsp_backend_error`。真机量化数据必须归档到阶段验证报告，不得用自动化测试结果替代。
 
 ## 9. SQLite v2
 

@@ -11,11 +11,26 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Test)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Test Multimedia MultimediaWidgets)
 
 option(BUILD_RTSP_SPIKE "Build the manual RV1126B RTSP validation tool" ON)
 
+set(RTSP_PLAYER_CORE_SOURCES
+    src/rv1126b/infrastructure/video/IMediaPlaybackBackend.h
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayer.cpp
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayer.h
+    src/rv1126b/ports/IRtspPlayer.h
+)
+
+set(RTSP_PLAYER_SOURCES
+    ${RTSP_PLAYER_CORE_SOURCES}
+    src/rv1126b/infrastructure/video/QtMediaPlaybackBackend.cpp
+    src/rv1126b/infrastructure/video/QtMediaPlaybackBackend.h
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayerFactory.cpp
+)
+
 qt_add_executable(CameraManagerApp
+    ${RTSP_PLAYER_SOURCES}
     src/main.cpp
     src/device/IDeviceClient.cpp
     src/device/IDeviceClient.h
@@ -38,7 +53,6 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/domain/Models.h
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/ports/IEventRepository.h
-    src/rv1126b/ports/IRtspPlayer.h
     src/rv1126b/ports/ISecretStore.h
     src/rv1126b/protocol/ApiCodec.h
     src/rv1126b/protocol/ApiDtos.h
@@ -73,6 +87,8 @@ target_link_libraries(CameraManagerApp
         Qt6::Widgets
         Qt6::Sql
         Qt6::Network
+        Qt6::Multimedia
+        Qt6::MultimediaWidgets
 )
 
 enable_testing()
@@ -225,17 +241,35 @@ target_compile_options(Rv1126bArchitectureTypesTest
 
 add_test(NAME Rv1126bArchitectureTypesTest COMMAND Rv1126bArchitectureTypesTest)
 
-if(BUILD_RTSP_SPIKE)
-    find_package(Qt6 REQUIRED COMPONENTS Multimedia MultimediaWidgets)
+qt_add_executable(RtspPlayerTest
+    tests/RtspPlayerTest.cpp
+    ${RTSP_PLAYER_CORE_SOURCES}
+    src/rv1126b/core/Result.h
+)
 
+target_link_libraries(RtspPlayerTest
+    PRIVATE
+        Qt6::Widgets
+        Qt6::Test
+)
+
+target_compile_options(RtspPlayerTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME RtspPlayerTest COMMAND RtspPlayerTest)
+set_tests_properties(RtspPlayerTest PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_MEDIA_BACKEND=ffmpeg"
+)
+
+if(BUILD_RTSP_SPIKE)
     qt_add_executable(Rv1126bRtspSpike
         tools/rtsp_spike/main.cpp
-        tools/rtsp_spike/QtMultimediaRtspPlayer.cpp
-        tools/rtsp_spike/QtMultimediaRtspPlayer.h
         tools/rtsp_spike/SpikeWindow.cpp
         tools/rtsp_spike/SpikeWindow.h
+        ${RTSP_PLAYER_SOURCES}
         src/rv1126b/core/Result.h
-        src/rv1126b/ports/IRtspPlayer.h
     )
 
     target_link_libraries(Rv1126bRtspSpike

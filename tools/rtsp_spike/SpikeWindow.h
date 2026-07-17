@@ -16,7 +16,10 @@ class QPlainTextEdit;
 class QPushButton;
 class QSpinBox;
 class QTimer;
+
+namespace rv1126b {
 class QtMultimediaRtspPlayer;
+}
 
 struct RtspSpikeOptions {
     QString deviceId;
@@ -96,7 +99,7 @@ private:
     QString redact(const QString& value) const;
 
     RtspSpikeOptions options_;
-    QtMultimediaRtspPlayer* player_ = nullptr;
+    rv1126b::QtMultimediaRtspPlayer* player_ = nullptr;
     QLabel* stateLabel_ = nullptr;
     QLabel* metricsLabel_ = nullptr;
     QLabel* healthLabel_ = nullptr;

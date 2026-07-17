@@ -1,6 +1,6 @@
 #include "SpikeWindow.h"
 
-#include "QtMultimediaRtspPlayer.h"
+#include "../../src/rv1126b/infrastructure/video/QtMultimediaRtspPlayer.h"
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -90,7 +90,7 @@ SpikeWindow::SpikeWindow(RtspSpikeOptions options, QWidget* parent)
     stream << "timestamp,event,elapsed_ms,role,state,value1,value2,cpu_percent,working_set_mb,health_status,detail\n";
     stream.flush();
 
-    player_ = new QtMultimediaRtspPlayer(this);
+    player_ = new rv1126b::QtMultimediaRtspPlayer(this);
     setupUi();
     connectPlayer();
 
@@ -233,7 +233,7 @@ void SpikeWindow::connectPlayer()
                            safeMessage);
                 appendUiLog(QStringLiteral("播放器错误 [%1] %2").arg(error.code, safeMessage));
             });
-    connect(player_, &QtMultimediaRtspPlayer::playbackAttempted, this,
+    connect(player_, &rv1126b::QtMultimediaRtspPlayer::playbackAttempted, this,
             [this](int attempt, bool reconnecting) {
                 RoleStats& stats = statsForRole(currentRole_);
                 ++stats.attempts;
@@ -245,7 +245,7 @@ void SpikeWindow::connectPlayer()
                            reconnecting ? QStringLiteral("reconnect") : QStringLiteral("open"));
                 updateStatusLabels();
             });
-    connect(player_, &QtMultimediaRtspPlayer::firstFrameReceived, this,
+    connect(player_, &rv1126b::QtMultimediaRtspPlayer::firstFrameReceived, this,
             [this](qint64 elapsedMs, const QSize& size, qreal declaredFps) {
                 RoleStats& stats = statsForRole(currentRole_);
                 ++stats.successes;
@@ -263,10 +263,10 @@ void SpikeWindow::connectPlayer()
                 }
                 updateStatusLabels();
             });
-    connect(player_, &QtMultimediaRtspPlayer::frameReceived, this, [this]() {
+    connect(player_, &rv1126b::QtMultimediaRtspPlayer::frameReceived, this, [this]() {
         ++statsForRole(currentRole_).frames;
     });
-    connect(player_, &QtMultimediaRtspPlayer::streamMetadataReceived, this,
+    connect(player_, &rv1126b::QtMultimediaRtspPlayer::streamMetadataReceived, this,
             [this](const QString& codec, const QSize& resolution, qreal frameRate) {
                 if (codec.isEmpty() && !resolution.isValid() && frameRate <= 0) {
                     return;
@@ -276,7 +276,7 @@ void SpikeWindow::connectPlayer()
                            QStringLiteral("%1x%2").arg(resolution.width()).arg(resolution.height()),
                            QStringLiteral("fps=%1").arg(frameRate, 0, 'f', 2));
             });
-    connect(player_, &QtMultimediaRtspPlayer::reconnectScheduled, this,
+    connect(player_, &rv1126b::QtMultimediaRtspPlayer::reconnectScheduled, this,
             [this](int attempt, int delayMs) {
                 ++statsForRole(currentRole_).reconnects;
                 writeEvent(QStringLiteral("reconnect_scheduled"), QString::number(attempt),

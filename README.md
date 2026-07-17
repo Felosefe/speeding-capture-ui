@@ -2,7 +2,7 @@
 
 本项目是一个基于 C++17 和 Qt 6 Widgets 的 Windows 桌面端上位机调试工具。
 
-当前进度：已完成模块四，软件全局系统设置；顶部齿轮入口已接入全局配置弹窗、配置持久化、视频/列表显示策略、结果保存策略和后台自动运维能力。
+当前进度：已完成模块四全局系统设置，以及 RV1126B 对接 C 部分阶段 1 的正式 RTSP 播放器基础设施；真实播放器尚未接入主界面。
 
 已完成内容：
 
@@ -53,11 +53,16 @@
 - 磁盘维护支持清理过期素材，并在低剩余空间时删除最早素材
 - `DeviceManager` 支持批量连接、批量断开和批量同步设备时间
 - `CaptureRecordService` 支持按最大缓存条数查询最近抓拍记录
+- 新增正式 `QtMultimediaRtspPlayer`，使用 Qt Multimedia 的 FFmpeg backend 播放 RV1126B 主/辅 RTSP 码流
+- RTSP 播放器支持首帧超时、卡流检测、`1/2/4/8/10` 秒退避重连、流切换、状态上报和可靠停止
+- 播放器与媒体后端已分层，使用播放尝试令牌隔离旧码流的迟到帧和错误
+- `Rv1126bRtspSpike` 与正式应用共用同一播放器实现
+- 新增 `RtspPlayerTest`，使用 fake backend 覆盖状态、超时、重连、停止、切流、资源释放和凭据脱敏
 - 新增 `SystemSettingsServiceTest`、`CaptureStorageServiceTest`、`MaintenanceControllerTest`、`DeviceManagerTest`
-- 当前测试覆盖 5 个 Qt Test 目标：抓拍记录服务、全局设置服务、素材存储服务、后台运维控制器和设备管理服务
+- 当前测试覆盖 7 个 Qt Test 目标，包括 RV1126B 架构契约和 RTSP 播放器状态机
 - `CMakePresets.json` 已补充本机 Qt 6.11.1 MinGW / MSVC 构建配置
 
-后续阶段将继续完善操作日志、真实相机 SDK 接入、真实抓拍图片/录像写入和批量管理能力。
+后续阶段将接入设备发现/会话与主界面实时视频，并继续完善真实事件、evidence 缓存和批量管理能力。
 
 ## 构建方式
 
