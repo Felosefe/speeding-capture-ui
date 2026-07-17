@@ -354,8 +354,12 @@ Token 只能放入 Authorization header，不能进入 URL、普通日志或 Git
 统一状态：Idle、Opening、Playing、Reconnecting、Stopped、Error。端口只冻结 open、stop、state、
 outputWidget 和状态/错误信号，不暴露具体解码帧类型。
 
-后端尚未冻结，可在独立技术验证后选择 Qt Multimedia、外部 FFmpeg 或其他实现。选择后不得改变
-UI 对 `IRtspPlayer` 的依赖方式。
+阶段 0 首选候选为 Qt 6.11.1 Multimedia 的 FFmpeg 后端，独立验证入口为
+`Rv1126bRtspSpike`。该工具复用本节接口，负责首帧超时、卡流检测、退避重连和状态上报；Qt
+Multimedia 对象留在 GUI 线程，实际解码线程由媒体后端创建和回收。最终后端必须在真机
+`/live/0`、`/live/1` 完成连续播放、停止、重连、资源和部署验证后冻结。在验证报告通过前，
+此候选不得标记为正式选型；若失败则用外部 FFmpeg/libav 运行同一矩阵。无论最终选择哪个后端，
+不得改变 UI 对 `IRtspPlayer` 的依赖方式。
 
 ## 9. SQLite v2
 
@@ -457,4 +461,3 @@ model；SQLite 和正式 evidence 保留。不得调用任何板端 service stop
 8. Token 和 FTP 密码不出现在数据库、QSettings、日志或测试快照中。
 9. 图片只在校验成功后成为正式文件，取消后没有残留 `.part`。
 10. 断开设备不删除本地数据，也不影响板端继续检测和 FTP 下发。
-

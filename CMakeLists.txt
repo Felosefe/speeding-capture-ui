@@ -13,6 +13,8 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Test)
 
+option(BUILD_RTSP_SPIKE "Build the manual RV1126B RTSP validation tool" ON)
+
 qt_add_executable(CameraManagerApp
     src/main.cpp
     src/device/IDeviceClient.cpp
@@ -222,6 +224,37 @@ target_compile_options(Rv1126bArchitectureTypesTest
 )
 
 add_test(NAME Rv1126bArchitectureTypesTest COMMAND Rv1126bArchitectureTypesTest)
+
+if(BUILD_RTSP_SPIKE)
+    find_package(Qt6 REQUIRED COMPONENTS Multimedia MultimediaWidgets)
+
+    qt_add_executable(Rv1126bRtspSpike
+        tools/rtsp_spike/main.cpp
+        tools/rtsp_spike/QtMultimediaRtspPlayer.cpp
+        tools/rtsp_spike/QtMultimediaRtspPlayer.h
+        tools/rtsp_spike/SpikeWindow.cpp
+        tools/rtsp_spike/SpikeWindow.h
+        src/rv1126b/core/Result.h
+        src/rv1126b/ports/IRtspPlayer.h
+    )
+
+    target_link_libraries(Rv1126bRtspSpike
+        PRIVATE
+            Qt6::Widgets
+            Qt6::Network
+            Qt6::Multimedia
+            Qt6::MultimediaWidgets
+    )
+
+    if(WIN32)
+        target_link_libraries(Rv1126bRtspSpike PRIVATE psapi)
+    endif()
+
+    target_compile_options(Rv1126bRtspSpike
+        PRIVATE
+            $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    )
+endif()
 
 target_compile_options(CameraManagerApp
     PRIVATE
