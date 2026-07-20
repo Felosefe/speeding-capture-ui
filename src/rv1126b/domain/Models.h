@@ -124,6 +124,15 @@ struct StoredFtpTask {
     QVector<StoredFtpTargetStatus> targets;
 };
 
+struct FtpTaskQuery {
+    std::optional<QString> deviceId;
+    std::optional<qint64> startEpochMs;
+    std::optional<qint64> endEpochMs;
+    int limit = 100;
+    int offset = 0;
+    bool newestFirst = true;
+};
+
 struct EventQuery {
     std::optional<QString> deviceId;
     std::optional<QString> plateText;

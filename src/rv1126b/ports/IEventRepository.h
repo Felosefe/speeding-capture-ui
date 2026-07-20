@@ -73,6 +73,10 @@ public:
         const StoredFtpTask& task,
         QObject* context,
         ApiCompletion<void> completion) = 0;
+    virtual RequestId loadFtpTaskSnapshots(
+        const FtpTaskQuery& query,
+        QObject* context,
+        ApiCompletion<QVector<StoredFtpTask>> completion) = 0;
 
     virtual void cancel(const RequestId& requestId) = 0;
     virtual void cancelAll() = 0;

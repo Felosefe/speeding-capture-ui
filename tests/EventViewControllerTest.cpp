@@ -66,6 +66,8 @@ public:
     { return value(std::move(c), std::optional<SyncAnchor>{}); }
     RequestId saveSyncAnchor(const SyncAnchor&, QObject*, ApiCompletion<void> c) override { return done(std::move(c)); }
     RequestId saveFtpTaskSnapshot(const StoredFtpTask&, QObject*, ApiCompletion<void> c) override { return done(std::move(c)); }
+    RequestId loadFtpTaskSnapshots(const FtpTaskQuery&, QObject*, ApiCompletion<QVector<StoredFtpTask>> c) override
+    { return value(std::move(c), QVector<StoredFtpTask>{}); }
     void cancel(const RequestId&) override { ++cancelCount; }
     void cancelAll() override { ++cancelAllCount; }
 
