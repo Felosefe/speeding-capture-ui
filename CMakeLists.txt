@@ -11,7 +11,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Network Test)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Sql Network Test)
 
 qt_add_executable(CameraManagerApp
     src/main.cpp
@@ -43,9 +43,21 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/services/DeviceDiscoveryService.h
     src/rv1126b/services/DeviceFleetService.h
     src/rv1126b/services/DeviceSession.h
+    src/rv1126b/services/BoardEventSyncService.cpp
+    src/rv1126b/services/BoardEventSyncService.h
+    src/rv1126b/services/BoardEvidenceCache.cpp
+    src/rv1126b/services/BoardEvidenceCache.h
+    src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/BoardFtpTaskSnapshotService.h
     src/rv1126b/services/EventSyncService.h
     src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
+    src/rv1126b/services/EvidenceCacheMaintenanceService.h
     src/rv1126b/services/FtpService.h
+    src/rv1126b/services/LocalEvidenceService.cpp
+    src/rv1126b/services/LocalEvidenceService.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
     src/services/DeviceManager.cpp
     src/services/DeviceManager.h
     src/services/CaptureRecordService.cpp
@@ -203,6 +215,7 @@ qt_add_executable(Rv1126bArchitectureTypesTest
     src/rv1126b/services/DeviceDiscoveryService.h
     src/rv1126b/services/DeviceFleetService.h
     src/rv1126b/services/DeviceSession.h
+    src/rv1126b/services/BoardFtpTaskSnapshotService.h
     src/rv1126b/services/EventSyncService.h
     src/rv1126b/services/EvidenceCache.h
     src/rv1126b/services/FtpService.h
@@ -222,6 +235,195 @@ target_compile_options(Rv1126bArchitectureTypesTest
 )
 
 add_test(NAME Rv1126bArchitectureTypesTest COMMAND Rv1126bArchitectureTypesTest)
+
+qt_add_executable(SqliteEventRepositoryTest
+    tests/SqliteEventRepositoryTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(SqliteEventRepositoryTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(SqliteEventRepositoryTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(SqliteEventRepositoryTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME SqliteEventRepositoryTest COMMAND SqliteEventRepositoryTest)
+
+qt_add_executable(EventSyncServiceTest
+    tests/EventSyncServiceTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/BoardEventSyncService.cpp
+    src/rv1126b/services/BoardEventSyncService.h
+    src/rv1126b/services/EventSyncService.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(EventSyncServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(EventSyncServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(EventSyncServiceTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME EventSyncServiceTest COMMAND EventSyncServiceTest)
+
+qt_add_executable(EvidenceCacheTest
+    tests/EvidenceCacheTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/BoardEvidenceCache.cpp
+    src/rv1126b/services/BoardEvidenceCache.h
+    src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(EvidenceCacheTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(EvidenceCacheTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(EvidenceCacheTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME EvidenceCacheTest COMMAND EvidenceCacheTest)
+
+qt_add_executable(LocalEvidenceServiceTest
+    tests/LocalEvidenceServiceTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/services/LocalEvidenceService.cpp
+    src/rv1126b/services/LocalEvidenceService.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(LocalEvidenceServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(LocalEvidenceServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(LocalEvidenceServiceTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME LocalEvidenceServiceTest COMMAND LocalEvidenceServiceTest)
+
+qt_add_executable(FtpTaskSnapshotServiceTest
+    tests/FtpTaskSnapshotServiceTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/BoardFtpTaskSnapshotService.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(FtpTaskSnapshotServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(FtpTaskSnapshotServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(FtpTaskSnapshotServiceTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME FtpTaskSnapshotServiceTest COMMAND FtpTaskSnapshotServiceTest)
+
+qt_add_executable(EvidenceCacheMaintenanceServiceTest
+    tests/EvidenceCacheMaintenanceServiceTest.cpp
+    src/models/SystemSettings.h
+    src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
+    src/rv1126b/services/EvidenceCacheMaintenanceService.h
+)
+
+target_link_libraries(EvidenceCacheMaintenanceServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Test
+)
+
+target_compile_options(EvidenceCacheMaintenanceServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(EvidenceCacheMaintenanceServiceTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME EvidenceCacheMaintenanceServiceTest COMMAND EvidenceCacheMaintenanceServiceTest)
 
 target_compile_options(CameraManagerApp
     PRIVATE
