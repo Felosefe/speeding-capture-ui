@@ -2,7 +2,7 @@
 
 本项目是一个基于 C++17 和 Qt 6 Widgets 的 Windows 桌面端上位机调试工具。
 
-当前进度：已完成模块四全局系统设置，以及 RV1126B 对接 C 部分阶段 2/3 的搜索连接、实时视频、事件可靠性界面和本地图片回看集成。A/B 的真实发现、会话、仓储、事件同步与 evidence 缓存实现仍待合入。
+当前进度：已完成模块四全局系统设置，以及 RV1126B 对接 C 部分阶段 2/3/4 的搜索连接、实时视频、事件可靠性、本地图片回看、设备配置与 FTP 任务界面集成。A/B 的真实发现、会话、仓储、事件同步、evidence 缓存、配置与 FTP 服务生产实现仍待合入。
 
 已完成内容：
 
@@ -70,11 +70,18 @@
 - 真实 JPEG 优先从 PC 缓存解码回看；在线缺图自动补下载，离线未缓存和 409 重试状态明确展示
 - 真实事件支持按当前筛选完整分页导出 CSV，以及先删本地图片再删仓储记录的单条删除/批量清空
 - 设备断开和应用退出按同步、仓储请求、图片任务、RTSP、数据会话的顺序释放 PC 资源
+- 新增 `DeviceOperationsController`，按 `device_id` 解析板端 API 与 FTP service，统一处理配置、时间、revision 冲突、任务和取消代次
+- 真实设备“设备配置”新增展示配置、时间、FTP 配置和 FTP 历史任务四页签；模拟模式保留原配置对话框
+- 展示配置执行 UTF-8 字节长度、控制字符和限速校验，并显示重启要求、生效范围及已有事件不变语义
+- 时间页同时显示 UTC、本地时间、source epoch、offset、quality、NTP 和写能力；校时只提交当前 PC UTC epoch
+- FTP 支持最多 8 个 IPv4 目标、keep/replace/clear 密码动作、配置回滚、自动下发启停和部分成功提示
+- revision 冲突会重新读取远端快照、保留非敏感本地编辑并要求确认；替换密码立即清空且冲突后必须重输
+- FTP 历史任务按 UTC `[start,end)` 创建，支持 50 条 cursor 分页、2 秒无堆积刷新、逐目标状态和失败任务重试
 - 新增 `SystemSettingsServiceTest`、`CaptureStorageServiceTest`、`MaintenanceControllerTest`、`DeviceManagerTest`
-- 当前测试覆盖 11 个 Qt Test 目标，包括 RV1126B 架构契约、应用集成、事件回看 UI 和 RTSP 播放器状态机
+- 当前测试覆盖 13 个 Qt Test 目标，包括 RV1126B 架构契约、设备操作、应用集成、事件回看 UI 和 RTSP 播放器状态机
 - `CMakePresets.json` 已补充本机 Qt 6.11.1 MinGW / MSVC 构建配置
 
-后续由 A/B 合入真实设备发现、会话、SQLite v2、事件同步和 evidence 缓存生产实现，再执行阶段 3 真机 G3 联合验收。
+后续由 A/B 合入真实设备发现、会话、SQLite v2、事件同步、evidence 缓存、配置和 FTP service 生产实现，再执行阶段 3 G3 与阶段 4 G4 真机联合验收。
 
 ## 构建方式
 

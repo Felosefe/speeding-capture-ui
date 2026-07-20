@@ -11,6 +11,7 @@
 #include "DeviceConfigDialog.h"
 #include "DeviceDiscoveryDialog.h"
 #include "LivePreviewPanel.h"
+#include "Rv1126bDeviceManagementDialog.h"
 #include "SystemSettingsDialog.h"
 
 #include <QAbstractItemView>
@@ -93,8 +94,14 @@ MainWindow::MainWindow(MainWindowDependencies dependencies, QWidget* parent)
                                        {dependencies.discovery,
                                         dependencies.fleet,
                                         dependencies.secretStore,
-                                        dependencies.player},
+                                       dependencies.player},
                                        this))
+    , operationsController_(dependencies.mockMode
+                                ? nullptr
+                                : new rv1126b::DeviceOperationsController(
+                                      {dependencies.boardApiForDevice,
+                                       dependencies.ftpServiceForDevice},
+                                      this))
     , eventController_(dependencies.mockMode
                            ? nullptr
                            : new rv1126b::EventViewController(
@@ -181,6 +188,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
         shutdownStarted_ = true;
         if (eventController_) {
             eventController_->shutdown();
+        }
+        if (operationsController_) {
+            operationsController_->shutdown();
         }
         if (integrationController_) {
             integrationController_->shutdown();
@@ -1022,9 +1032,28 @@ void MainWindow::disconnectSelectedDevice()
 void MainWindow::openDeviceConfig()
 {
     const int row = currentDeviceRow();
-    const Device* device = deviceManager_->deviceAt(row);
+    const Device* device = mockMode_ ? deviceManager_->deviceAt(row) : deviceModel_->deviceAt(row);
     if (!device) {
         statusBar()->showMessage(QStringLiteral("请先选择一个设备"), 2500);
+        return;
+    }
+
+    if (!mockMode_) {
+        if (!operationsController_
+            || device->status.connectionState != DeviceConnectionState::Online) {
+            statusBar()->showMessage(QStringLiteral("设备在线后才能读取或修改配置"), 3500);
+            return;
+        }
+        operationsController_->selectDevice(device->id);
+        if (!operationsController_->boardApiAvailable()
+            && !operationsController_->ftpServiceAvailable()) {
+            statusBar()->showMessage(QStringLiteral("当前设备的配置与 FTP 服务尚未装配"), 5000);
+            return;
+        }
+        Rv1126bDeviceManagementDialog dialog(
+            device->id, operationsController_,
+            Rv1126bDeviceManagementDialog::InitialPage::Evidence, this);
+        dialog.exec();
         return;
     }
 
@@ -1067,8 +1096,27 @@ void MainWindow::rebootSelectedDevice()
 void MainWindow::syncSelectedDeviceTime()
 {
     const int row = currentDeviceRow();
-    if (row < 0) {
+    const Device* device = mockMode_ ? deviceManager_->deviceAt(row) : deviceModel_->deviceAt(row);
+    if (!device) {
         statusBar()->showMessage(QStringLiteral("请先选择一个设备"), 2500);
+        return;
+    }
+
+    if (!mockMode_) {
+        if (!operationsController_
+            || device->status.connectionState != DeviceConnectionState::Online) {
+            statusBar()->showMessage(QStringLiteral("设备在线后才能校时"), 3500);
+            return;
+        }
+        operationsController_->selectDevice(device->id);
+        if (!operationsController_->boardApiAvailable()) {
+            statusBar()->showMessage(QStringLiteral("当前设备的时间服务尚未装配"), 5000);
+            return;
+        }
+        Rv1126bDeviceManagementDialog dialog(
+            device->id, operationsController_,
+            Rv1126bDeviceManagementDialog::InitialPage::Time, this);
+        dialog.exec();
         return;
     }
 
@@ -1241,6 +1289,15 @@ void MainWindow::updateDeviceProperties()
     const CaptureRecord* latestRecordPtr = latestRecord ? &(*latestRecord) : nullptr;
 
     propertyModel_->setDevice(device, latestRecordPtr);
+    if (!mockMode_ && operationsController_) {
+        operationsController_->selectDevice(device ? device->id : QString());
+        const bool online = device
+            && device->status.connectionState == DeviceConnectionState::Online;
+        configAction_->setEnabled(online
+            && (operationsController_->boardApiAvailable()
+                || operationsController_->ftpServiceAvailable()));
+        syncTimeAction_->setEnabled(online && operationsController_->boardApiAvailable());
+    }
     if (!mockMode_
         && integrationController_
         && device
@@ -1382,6 +1439,11 @@ void MainWindow::handleSessionChanged(const rv1126b::DeviceSessionSnapshot& snap
         ? QDateTime::fromMSecsSinceEpoch(snapshot.lastHealthEpochMs)
         : QDateTime();
     deviceModel_->upsertDevice(device);
+    if (operationsController_
+        && operationsController_->deviceId() == snapshot.profile.deviceId
+        && snapshot.state != rv1126b::DeviceSessionState::Online) {
+        operationsController_->cancelPending();
+    }
     if (currentDeviceRow() < 0) {
         selectDeviceRow(row);
     }

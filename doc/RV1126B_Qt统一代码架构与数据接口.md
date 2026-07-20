@@ -339,6 +339,19 @@ PUT /ftp/config
 - configSaved=true、autoEnabled=false：目标已保存，但自动下发未开启。
 - 两项均 true：才显示自动下发已启用。
 
+### 7.8 `DeviceOperationsController`
+
+软件 C 的设备操作控制器通过按 `device_id` 解析的 `IBoardApiClient` 和 `FtpService` 组合展示配置、
+时间、FTP 配置/控制与历史任务，不拥有 A/B 的生产实现。控制器负责客户端预校验、稳定错误码映射、
+同类请求不重叠、切换设备后的迟到回调隔离，以及关闭时的请求取消。
+
+`MainWindowDependencies` 暴露 `BoardApiResolver` 和 `FtpServiceResolver`。resolver 返回的对象归装配层
+所有，必须至少存活到设备断开或应用关闭；UI 不得缓存 Token、FTP 密码或 `QNetworkReply`。
+
+FTP revision 冲突必须重新读取远端快照并由用户确认后重提。冲突比较只能包含非敏感字段；已提交的
+replace 密码立即清空，不能跨冲突保留或回显。历史任务页面每页请求 50 条，cursor 仅用于当前分页链，
+轮询期间同类请求最多一个在途。
+
 ## 8. 凭据和 RTSP
 
 ### 8.1 `ISecretStore`
@@ -450,6 +463,7 @@ model；SQLite 和正式 evidence 保留。不得调用任何板端 service stop
 | `domain/Models.h`、`ports/IEventRepository.h` | 领域和本地存储端口 | 软件 B |
 | `ports/IRtspPlayer.h` | 媒体后端隔离 | 软件 C |
 | `services/*` | 跨模块应用接口 | 对应负责人，集成负责人终审 |
+| `application/DeviceOperationsController.*`、设备操作 UI | 配置、时间和 FTP 应用编排 | 软件 C |
 
 任何公共字段或方法变更必须同步修改本文、头文件和相关测试夹具，并由至少两名成员评审。
 

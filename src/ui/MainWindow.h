@@ -6,6 +6,7 @@
 #include "../models/SystemSettings.h"
 #include "../services/CaptureStorageService.h"
 #include "../rv1126b/application/DeviceIntegrationController.h"
+#include "../rv1126b/application/DeviceOperationsController.h"
 #include "../rv1126b/application/EventViewController.h"
 
 #include <QMainWindow>
@@ -48,6 +49,8 @@ struct MainWindowDependencies {
     rv1126b::IEventRepository* eventRepository = nullptr;
     rv1126b::EvidenceCache* evidenceCache = nullptr;
     QVector<rv1126b::EventSyncService*> eventSyncServices;
+    rv1126b::BoardApiResolver boardApiForDevice;
+    rv1126b::FtpServiceResolver ftpServiceForDevice;
     bool mockMode = false;
 };
 
@@ -183,6 +186,7 @@ private:
     SystemSettingsService* systemSettingsService_ = nullptr;
     MaintenanceController* maintenanceController_ = nullptr;
     rv1126b::DeviceIntegrationController* integrationController_ = nullptr;
+    rv1126b::DeviceOperationsController* operationsController_ = nullptr;
     rv1126b::EventViewController* eventController_ = nullptr;
     rv1126b::IRtspPlayer* rtspPlayer_ = nullptr;
     DeviceTableModel* deviceModel_ = nullptr;

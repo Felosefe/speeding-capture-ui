@@ -52,6 +52,8 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/core/ValueTypes.h
     src/rv1126b/application/DeviceIntegrationController.cpp
     src/rv1126b/application/DeviceIntegrationController.h
+    src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/application/DeviceOperationsController.h
     src/rv1126b/application/EventViewController.cpp
     src/rv1126b/application/EventViewController.h
     src/rv1126b/domain/Models.h
@@ -82,6 +84,8 @@ qt_add_executable(CameraManagerApp
     src/ui/DeviceDiscoveryDialog.h
     src/ui/LivePreviewPanel.cpp
     src/ui/LivePreviewPanel.h
+    src/ui/Rv1126bDeviceManagementDialog.cpp
+    src/ui/Rv1126bDeviceManagementDialog.h
     src/ui/SystemSettingsDialog.cpp
     src/ui/SystemSettingsDialog.h
     src/ui/MainWindow.cpp
@@ -358,6 +362,43 @@ target_link_libraries(EventViewUiTest
 target_compile_options(EventViewUiTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 add_test(NAME EventViewUiTest COMMAND EventViewUiTest)
 set_tests_properties(EventViewUiTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(DeviceOperationsControllerTest
+    tests/DeviceOperationsControllerTest.cpp
+    src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/application/DeviceOperationsController.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/FtpService.h
+)
+target_link_libraries(DeviceOperationsControllerTest
+    PRIVATE Qt6::Core Qt6::Network Qt6::Test
+)
+target_compile_options(DeviceOperationsControllerTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME DeviceOperationsControllerTest COMMAND DeviceOperationsControllerTest)
+
+qt_add_executable(DeviceOperationsUiTest
+    tests/DeviceOperationsUiTest.cpp
+    src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/application/DeviceOperationsController.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/FtpService.h
+    src/ui/Rv1126bDeviceManagementDialog.cpp
+    src/ui/Rv1126bDeviceManagementDialog.h
+)
+target_link_libraries(DeviceOperationsUiTest
+    PRIVATE Qt6::Core Qt6::Network Qt6::Widgets Qt6::Test
+)
+target_compile_options(DeviceOperationsUiTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME DeviceOperationsUiTest COMMAND DeviceOperationsUiTest)
+set_tests_properties(DeviceOperationsUiTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(RtspPlayerTest
     tests/RtspPlayerTest.cpp
