@@ -1,0 +1,441 @@
+#include "DeviceIntegrationController.h"
+
+#include <QAbstractSocket>
+#include <QHostAddress>
+#include <QUrl>
+
+#include <algorithm>
+#include <utility>
+
+namespace rv1126b {
+
+DeviceIntegrationController::DeviceIntegrationController(
+    DeviceIntegrationDependencies dependencies,
+    QObject* parent)
+    : QObject(parent)
+    , dependencies_(dependencies)
+{
+    if (dependencies_.discovery) {
+        connect(dependencies_.discovery, &DeviceDiscoveryService::deviceFound,
+                this, &DeviceIntegrationController::handleDeviceFound);
+        connect(dependencies_.discovery, &DeviceDiscoveryService::scanFinished,
+                this, &DeviceIntegrationController::handleScanFinished);
+        connect(dependencies_.discovery, &DeviceDiscoveryService::scanFailed,
+                this, &DeviceIntegrationController::handleScanFailed);
+    }
+
+    if (dependencies_.fleet) {
+        const QVector<DeviceSessionSnapshot> initialSessions = dependencies_.fleet->sessions();
+        for (const DeviceSessionSnapshot& snapshot : initialSessions) {
+            sessionsById_.insert(snapshot.profile.deviceId, snapshot);
+        }
+        selectedVideoDeviceId_ = dependencies_.fleet->selectedVideoDeviceId();
+
+        connect(dependencies_.fleet, &DeviceFleetService::sessionChanged,
+                this, &DeviceIntegrationController::handleSessionChanged);
+        connect(dependencies_.fleet, &DeviceFleetService::selectedVideoDeviceChanged,
+                this, &DeviceIntegrationController::handleSelectedVideoDeviceChanged);
+        connect(dependencies_.fleet, &DeviceFleetService::fleetError,
+                this, &DeviceIntegrationController::handleFleetError);
+    }
+
+    if (dependencies_.player) {
+        connect(dependencies_.player, &IRtspPlayer::stateChanged,
+                this, &DeviceIntegrationController::playbackStateChanged);
+        connect(dependencies_.player, &IRtspPlayer::errorOccurred,
+                this, &DeviceIntegrationController::handlePlaybackError);
+    }
+
+    openSelectedStream();
+}
+
+DeviceIntegrationController::~DeviceIntegrationController()
+{
+    shutdown();
+}
+
+bool DeviceIntegrationController::networkServicesAvailable() const
+{
+    return dependencies_.discovery && dependencies_.fleet && dependencies_.secretStore;
+}
+
+bool DeviceIntegrationController::isScanning() const
+{
+    return scanning_;
+}
+
+QVector<DiscoveredDeviceDto> DeviceIntegrationController::discoveredDevices() const
+{
+    QVector<DiscoveredDeviceDto> devices = discoveredById_.values();
+    std::sort(devices.begin(), devices.end(), [](const auto& left, const auto& right) {
+        return left.deviceId < right.deviceId;
+    });
+    return devices;
+}
+
+QVector<DeviceSessionSnapshot> DeviceIntegrationController::sessionSnapshots() const
+{
+    QVector<DeviceSessionSnapshot> snapshots = sessionsById_.values();
+    std::sort(snapshots.begin(), snapshots.end(), [](const auto& left, const auto& right) {
+        return left.profile.deviceId < right.profile.deviceId;
+    });
+    return snapshots;
+}
+
+std::optional<DiscoveredDeviceDto> DeviceIntegrationController::discoveredDevice(
+    const QString& deviceId) const
+{
+    const auto it = discoveredById_.constFind(deviceId);
+    if (it == discoveredById_.cend()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+bool DeviceIntegrationController::hasCredentialForDevice(const QString& deviceId) const
+{
+    const auto snapshot = sessionFor(deviceId);
+    return snapshot && !snapshot->profile.credentialRef.isEmpty();
+}
+
+RtspStreamRole DeviceIntegrationController::streamRole() const
+{
+    return streamRole_;
+}
+
+QString DeviceIntegrationController::selectedVideoDeviceId() const
+{
+    return selectedVideoDeviceId_;
+}
+
+RequestId DeviceIntegrationController::startScan(int scanWindowMs)
+{
+    if (shutdown_ || !networkServicesAvailable()) {
+        emitUnavailable();
+        return {};
+    }
+
+    cancelScan();
+    discoveredById_.clear();
+    emit discoveredDevicesReset();
+
+    activeScanId_ = dependencies_.discovery->startScan(scanWindowMs);
+    if (activeScanId_.isNull()) {
+        ApiError error;
+        error.code = QStringLiteral("discovery_start_failed");
+        error.category = ApiErrorCategory::Network;
+        emitSafeError(error);
+        return {};
+    }
+
+    scanning_ = true;
+    emit scanStateChanged(true);
+    return activeScanId_;
+}
+
+void DeviceIntegrationController::cancelScan()
+{
+    if (!scanning_) {
+        return;
+    }
+
+    const RequestId scanId = activeScanId_;
+    activeScanId_ = RequestId();
+    scanning_ = false;
+    if (dependencies_.discovery && !scanId.isNull()) {
+        dependencies_.discovery->cancelScan(scanId);
+    }
+    emit scanStateChanged(false);
+}
+
+bool DeviceIntegrationController::connectDiscoveredDevice(const QString& deviceId,
+                                                           SecretValue token)
+{
+    if (shutdown_ || !networkServicesAvailable()) {
+        emitUnavailable();
+        return false;
+    }
+
+    const auto discovered = discoveredDevice(deviceId);
+    if (!discovered) {
+        emit userError(QStringLiteral("device_not_discovered"),
+                       QStringLiteral("设备不在当前搜索结果中，请重新搜索"));
+        return false;
+    }
+
+    QString credentialRef;
+    if (const auto existing = sessionFor(deviceId)) {
+        credentialRef = existing->profile.credentialRef;
+    }
+
+    if (!token.isEmpty()) {
+        ApiResult<QString> stored = dependencies_.secretStore->storeToken(deviceId, std::move(token));
+        if (!stored) {
+            emitSafeError(stored.error());
+            return false;
+        }
+        credentialRef = stored.value();
+    } else if (discovered->authRequired && credentialRef.isEmpty()) {
+        emit userError(QStringLiteral("token_required"),
+                       QStringLiteral("该设备需要 Bearer Token"));
+        return false;
+    }
+
+    const DeviceProfile profile = profileFor(*discovered, credentialRef);
+    if (!dependencies_.fleet->upsertDevice(profile)) {
+        emit userError(QStringLiteral("device_upsert_failed"),
+                       QStringLiteral("无法保存设备连接信息"));
+        return false;
+    }
+    if (!selectVideoDevice(deviceId)) {
+        return false;
+    }
+    if (!dependencies_.fleet->connectDevice(deviceId)) {
+        emit userError(QStringLiteral("device_connect_failed"),
+                       QStringLiteral("无法启动设备连接"));
+        return false;
+    }
+    return true;
+}
+
+bool DeviceIntegrationController::selectVideoDevice(const QString& deviceId)
+{
+    if (shutdown_ || !dependencies_.fleet || deviceId.trimmed().isEmpty()) {
+        return false;
+    }
+    if (!dependencies_.fleet->selectVideoDevice(deviceId)) {
+        emit userError(QStringLiteral("video_device_select_failed"),
+                       QStringLiteral("无法选择视频设备"));
+        return false;
+    }
+    handleSelectedVideoDeviceChanged(deviceId);
+    return true;
+}
+
+void DeviceIntegrationController::disconnectDevice(const QString& deviceId)
+{
+    if (deviceId.trimmed().isEmpty() || !dependencies_.fleet) {
+        return;
+    }
+    if (deviceId == selectedVideoDeviceId_) {
+        stopPlayback();
+    }
+    dependencies_.fleet->disconnectDevice(deviceId);
+}
+
+void DeviceIntegrationController::setStreamRole(RtspStreamRole role)
+{
+    if (streamRole_ == role) {
+        return;
+    }
+    streamRole_ = role;
+    openSelectedStream();
+}
+
+void DeviceIntegrationController::shutdown()
+{
+    if (shutdown_) {
+        return;
+    }
+    shutdown_ = true;
+    cancelScan();
+    stopPlayback();
+    if (dependencies_.discovery) {
+        dependencies_.discovery->cancelAll();
+    }
+    if (dependencies_.fleet) {
+        dependencies_.fleet->disconnectAll();
+    }
+}
+
+void DeviceIntegrationController::handleDeviceFound(const RequestId& scanId,
+                                                     const DiscoveredDeviceDto& device)
+{
+    if (!scanning_ || scanId != activeScanId_ || device.deviceId.trimmed().isEmpty()) {
+        return;
+    }
+    discoveredById_.insert(device.deviceId, device);
+    emit discoveredDeviceUpserted(device);
+}
+
+void DeviceIntegrationController::handleScanFinished(const RequestId& scanId)
+{
+    if (!scanning_ || scanId != activeScanId_) {
+        return;
+    }
+    activeScanId_ = RequestId();
+    scanning_ = false;
+    emit scanStateChanged(false);
+}
+
+void DeviceIntegrationController::handleScanFailed(const RequestId& scanId,
+                                                    const ApiError& error)
+{
+    if (!scanning_ || scanId != activeScanId_) {
+        return;
+    }
+    activeScanId_ = RequestId();
+    scanning_ = false;
+    emit scanStateChanged(false);
+    emitSafeError(error);
+}
+
+void DeviceIntegrationController::handleSessionChanged(const DeviceSessionSnapshot& snapshot)
+{
+    const QString deviceId = snapshot.profile.deviceId;
+    const auto previous = sessionsById_.constFind(deviceId);
+    const DeviceSessionState previousState = previous == sessionsById_.cend()
+        ? DeviceSessionState::Disconnected
+        : previous->state;
+    sessionsById_.insert(deviceId, snapshot);
+    emit sessionChanged(snapshot);
+
+    if (deviceId != selectedVideoDeviceId_) {
+        return;
+    }
+
+    if (snapshot.state == DeviceSessionState::Online) {
+        openSelectedStream();
+    } else if (snapshot.state == DeviceSessionState::AuthenticationFailed) {
+        stopPlayback();
+        if (previousState != DeviceSessionState::AuthenticationFailed) {
+            emit userError(QStringLiteral("unauthorized"),
+                           QStringLiteral("认证失败，请重新配置 Token"));
+        }
+    } else if (snapshot.state == DeviceSessionState::Disconnected) {
+        stopPlayback();
+    }
+}
+
+void DeviceIntegrationController::handleSelectedVideoDeviceChanged(const QString& deviceId)
+{
+    if (selectedVideoDeviceId_ == deviceId) {
+        return;
+    }
+    stopPlayback();
+    selectedVideoDeviceId_ = deviceId;
+    emit selectedVideoDeviceChanged(deviceId);
+    openSelectedStream();
+}
+
+void DeviceIntegrationController::handleFleetError(const ApiError& error)
+{
+    emitSafeError(error);
+}
+
+void DeviceIntegrationController::handlePlaybackError(const ApiError& error)
+{
+    emit playbackError(error);
+    emitSafeError(error);
+}
+
+DeviceProfile DeviceIntegrationController::profileFor(const DiscoveredDeviceDto& device,
+                                                       const QString& credentialRef) const
+{
+    DeviceProfile profile;
+    profile.deviceId = device.deviceId;
+    profile.deviceModel = device.deviceModel;
+    profile.releaseVersion = device.releaseVersion;
+    profile.endpoint.ipv4 = device.ipv4;
+    profile.endpoint.apiBaseUrl = device.apiUrl;
+    profile.endpoint.httpPort = static_cast<quint16>(device.apiUrl.port(18080));
+    profile.endpoint.discoveryPort = DeviceDiscoveryService::DefaultDiscoveryPort;
+    profile.credentialRef = credentialRef;
+    profile.advertisedCapabilities = device.capabilities;
+    return profile;
+}
+
+std::optional<DeviceSessionSnapshot> DeviceIntegrationController::sessionFor(
+    const QString& deviceId) const
+{
+    const auto it = sessionsById_.constFind(deviceId);
+    if (it == sessionsById_.cend()) {
+        return std::nullopt;
+    }
+    return *it;
+}
+
+void DeviceIntegrationController::openSelectedStream()
+{
+    if (shutdown_ || !dependencies_.player || selectedVideoDeviceId_.isEmpty()) {
+        return;
+    }
+    const auto snapshot = sessionFor(selectedVideoDeviceId_);
+    if (!snapshot || snapshot->state != DeviceSessionState::Online) {
+        return;
+    }
+
+    QHostAddress address;
+    if (!address.setAddress(snapshot->profile.endpoint.ipv4)
+        || address.protocol() != QAbstractSocket::IPv4Protocol) {
+        emit userError(QStringLiteral("invalid_rtsp_endpoint"),
+                       QStringLiteral("设备 IPv4 地址无效，无法打开实时视频"));
+        return;
+    }
+
+    QUrl url;
+    url.setScheme(QStringLiteral("rtsp"));
+    url.setHost(snapshot->profile.endpoint.ipv4);
+    url.setPath(streamRole_ == RtspStreamRole::Main
+                    ? QStringLiteral("/live/0")
+                    : QStringLiteral("/live/1"));
+
+    RtspStreamSpec stream;
+    stream.deviceId = selectedVideoDeviceId_;
+    stream.url = url;
+    stream.role = streamRole_;
+    dependencies_.player->open(stream);
+    playbackDeviceId_ = selectedVideoDeviceId_;
+}
+
+void DeviceIntegrationController::stopPlayback()
+{
+    if (!dependencies_.player || playbackDeviceId_.isEmpty()) {
+        return;
+    }
+    dependencies_.player->stop();
+    playbackDeviceId_.clear();
+}
+
+void DeviceIntegrationController::emitSafeError(const ApiError& error)
+{
+    if (error.code == QStringLiteral("unauthorized")
+        || error.category == ApiErrorCategory::Authentication) {
+        emit userError(QStringLiteral("unauthorized"),
+                       QStringLiteral("认证失败，请重新配置 Token"));
+        return;
+    }
+
+    QString message;
+    switch (error.category) {
+    case ApiErrorCategory::Network:
+    case ApiErrorCategory::Temporary:
+        message = QStringLiteral("设备网络暂时不可用，请稍后重试");
+        break;
+    case ApiErrorCategory::Cancelled:
+        message = QStringLiteral("操作已取消");
+        break;
+    case ApiErrorCategory::Validation:
+        message = QStringLiteral("设备请求参数无效");
+        break;
+    case ApiErrorCategory::Storage:
+        message = QStringLiteral("无法安全保存设备凭据");
+        break;
+    case ApiErrorCategory::Protocol:
+        message = QStringLiteral("设备返回了不兼容的数据");
+        break;
+    default:
+        message = QStringLiteral("设备操作失败");
+        break;
+    }
+    emit userError(error.code.isEmpty() ? QStringLiteral("device_operation_failed") : error.code,
+                   message);
+}
+
+void DeviceIntegrationController::emitUnavailable()
+{
+    emit userError(QStringLiteral("services_unavailable"),
+                   QStringLiteral("真实设备网络服务尚未装配"));
+}
+
+} // namespace rv1126b

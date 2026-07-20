@@ -2,7 +2,7 @@
 
 本项目是一个基于 C++17 和 Qt 6 Widgets 的 Windows 桌面端上位机调试工具。
 
-当前进度：已完成模块四全局系统设置，以及 RV1126B 对接 C 部分阶段 1 的正式 RTSP 播放器基础设施；真实播放器尚未接入主界面。
+当前进度：已完成模块四全局系统设置，以及 RV1126B 对接 C 部分阶段 2/3 的搜索连接、实时视频、事件可靠性界面和本地图片回看集成。A/B 的真实发现、会话、仓储、事件同步与 evidence 缓存实现仍待合入。
 
 已完成内容：
 
@@ -18,7 +18,7 @@
 - `Device`、`DeviceStatus`、`DeviceConfig`、`CaptureRecord`、`OperationLog` 数据结构
 - `DeviceTableModel`、`DevicePropertyModel`、`CaptureRecordTableModel`
 - 设备表、属性表、抓拍表切换为 `QTableView + QAbstractTableModel`
-- 启动时显示多台模拟设备
+- 默认启动真实设备模式；旧模拟设备仅通过 `--mock` 显式启用
 - 点击设备后刷新属性表
 - 抓拍记录支持新增、单条删除、手动刷新、暂停刷新和历史回溯
 - `IDeviceClient` 统一设备接口
@@ -58,11 +58,23 @@
 - 播放器与媒体后端已分层，使用播放尝试令牌隔离旧码流的迟到帧和错误
 - `Rv1126bRtspSpike` 与正式应用共用同一播放器实现
 - 新增 `RtspPlayerTest`，使用 fake backend 覆盖状态、超时、重连、停止、切流、资源释放和凭据脱敏
+- 新增 `DeviceIntegrationController`，统一管理扫描代次、Token 引用、设备选择、会话状态与 RTSP 生命周期
+- 新增 RV1126B 搜索/连接对话框，支持按 `device_id` 去重、密码式 Token 输入和认证失败提示
+- 主界面嵌入真实播放器输出，默认播放 `/live/1`，并可切换 `/live/0`
+- HTTP 退化与 RTSP 故障相互隔离，切换设备只停止旧视频，不停止旧设备数据会话
+- 新增控制器和 UI 自动化测试，覆盖搜索、连接、凭据、认证、切流、断开与未装配状态
+- 新增 `EventViewController`，通过正式仓储、同步和 evidence 缓存端口编排实时事件、本地历史、分页、导出与删除
+- 真实模式事件表以 `(device_id,event_id,track_id)` 原行 upsert，支持 queued 到终态更新及不同 track 隔离
+- 抓拍区域新增“实时事件/本地历史”、当前/全部设备、车牌与 UTC 时间范围筛选及历史分页
+- 正式事件展示 OCR、速度、时间质量和图片缓存状态，板端时间未校验时给出明确警告
+- 真实 JPEG 优先从 PC 缓存解码回看；在线缺图自动补下载，离线未缓存和 409 重试状态明确展示
+- 真实事件支持按当前筛选完整分页导出 CSV，以及先删本地图片再删仓储记录的单条删除/批量清空
+- 设备断开和应用退出按同步、仓储请求、图片任务、RTSP、数据会话的顺序释放 PC 资源
 - 新增 `SystemSettingsServiceTest`、`CaptureStorageServiceTest`、`MaintenanceControllerTest`、`DeviceManagerTest`
-- 当前测试覆盖 7 个 Qt Test 目标，包括 RV1126B 架构契约和 RTSP 播放器状态机
+- 当前测试覆盖 11 个 Qt Test 目标，包括 RV1126B 架构契约、应用集成、事件回看 UI 和 RTSP 播放器状态机
 - `CMakePresets.json` 已补充本机 Qt 6.11.1 MinGW / MSVC 构建配置
 
-后续阶段将接入设备发现/会话与主界面实时视频，并继续完善真实事件、evidence 缓存和批量管理能力。
+后续由 A/B 合入真实设备发现、会话、SQLite v2、事件同步和 evidence 缓存生产实现，再执行阶段 3 真机 G3 联合验收。
 
 ## 构建方式
 
@@ -84,3 +96,17 @@ ctest --preset mingw-debug
 普通 PowerShell 下建议使用 `mingw-debug` / `mingw-release`。`msvc-*` preset 适合在 Visual Studio Developer PowerShell 或 Qt Creator 的 MSVC Kit 中使用。
 
 如果使用 Qt Creator，直接打开本目录的 `CMakeLists.txt` 或选择 `CMakePresets.json` 中的 preset 即可。
+
+## 运行模式
+
+默认启动真实设备模式。当前分支尚未包含 A/B 的具体网络服务，因此会明确显示“真实设备网络服务尚未装配”，不会回退到模拟设备：
+
+```powershell
+build\mingw-debug\CameraManagerApp.exe
+```
+
+需要继续使用旧模拟设备和模拟抓拍流程时，显式添加 `--mock`：
+
+```powershell
+build\mingw-debug\CameraManagerApp.exe --mock
+```

@@ -2,8 +2,12 @@
 
 #include "../models/CaptureRecord.h"
 #include "../models/Device.h"
+#include "../rv1126b/domain/Models.h"
 
+#include <QImage>
 #include <QWidget>
+
+#include <optional>
 
 class QTimer;
 
@@ -29,6 +33,12 @@ public:
 
     void setDevice(const Device* device);
     void setLatestRecord(const CaptureRecord* record);
+    void setVehicleEvent(const rv1126b::VehicleEvent* event);
+    void setEvidenceState(const std::optional<rv1126b::EvidenceCacheEntry>& entry,
+                          bool deviceOnline);
+    void clearVehicleEvent();
+    QString evidenceMessage() const;
+    bool hasDecodedEvidence() const;
     void setDisplayOptions(const VideoDisplayOptions& options);
 
 protected:
@@ -43,6 +53,8 @@ private:
     void drawVehicleOverlay(QPainter& painter, const QRect& rect) const;
     void drawPlateCloseup(QPainter& painter, const QRect& rect) const;
     void drawTextOverlay(QPainter& painter, const QRect& rect) const;
+    void drawEvidence(QPainter& painter, const QRect& rect) const;
+    void drawVehicleEventOverlay(QPainter& painter, const QRect& rect) const;
     void drawEmptyState(QPainter& painter, const QRect& rect, const QString& text) const;
 
     QString titleText() const;
@@ -54,6 +66,12 @@ private:
     CaptureRecord latestRecord_;
     bool hasDevice_ = false;
     bool hasLatestRecord_ = false;
+    bool hasVehicleEvent_ = false;
+    bool evidenceDeviceOnline_ = false;
     int frameIndex_ = 0;
     VideoDisplayOptions displayOptions_;
+    rv1126b::VehicleEvent vehicleEvent_;
+    std::optional<rv1126b::EvidenceCacheEntry> evidenceEntry_;
+    QImage evidenceImage_;
+    QString evidenceMessage_;
 };

@@ -5,11 +5,18 @@
 #include "../models/DeviceStatus.h"
 #include "../models/SystemSettings.h"
 #include "../services/CaptureStorageService.h"
+#include "../rv1126b/application/DeviceIntegrationController.h"
+#include "../rv1126b/application/EventViewController.h"
 
 #include <QMainWindow>
 
 class QAction;
+class QCheckBox;
+class QCloseEvent;
+class QComboBox;
+class QDateTimeEdit;
 class QLabel;
+class QLineEdit;
 class QMenu;
 class QPoint;
 class QSortFilterProxyModel;
@@ -31,6 +38,18 @@ class QEvent;
 class QSplitter;
 class SystemSettingsService;
 class VideoWidget;
+class LivePreviewPanel;
+
+struct MainWindowDependencies {
+    rv1126b::DeviceDiscoveryService* discovery = nullptr;
+    rv1126b::DeviceFleetService* fleet = nullptr;
+    rv1126b::ISecretStore* secretStore = nullptr;
+    rv1126b::IRtspPlayer* player = nullptr;
+    rv1126b::IEventRepository* eventRepository = nullptr;
+    rv1126b::EvidenceCache* evidenceCache = nullptr;
+    QVector<rv1126b::EventSyncService*> eventSyncServices;
+    bool mockMode = false;
+};
 
 class MainWindow final : public QMainWindow
 {
@@ -38,9 +57,12 @@ class MainWindow final : public QMainWindow
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(MainWindowDependencies dependencies, QWidget* parent = nullptr);
+    void attachEventSyncService(rv1126b::EventSyncService* service);
 
 protected:
     void changeEvent(QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void addDevice();
@@ -65,6 +87,14 @@ private slots:
     void handleDeviceConfigChanged(int row, const DeviceConfig& config);
     void handleCaptureGenerated(int row, const CaptureRecord& record);
     void handleDeviceError(int row, const QString& message);
+    void handleDiscoveredDevice(const rv1126b::DiscoveredDeviceDto& device);
+    void handleSessionChanged(const rv1126b::DeviceSessionSnapshot& snapshot);
+    void handleSelectedVideoDeviceChanged(const QString& deviceId);
+    void handleIntegrationError(const QString& code, const QString& message);
+    void updateSelectedEvidence();
+    void changeEventViewMode();
+    void previousHistoryPage();
+    void nextHistoryPage();
 
 private:
     void createActions();
@@ -73,6 +103,8 @@ private:
     void createStatusBar();
     void createDeviceContextMenu();
     void connectDeviceManager();
+    void connectIntegrationController();
+    void connectEventController();
     void populateInitialData();
     void updateStatusText();
     void selectDeviceRow(int row);
@@ -99,6 +131,9 @@ private:
     QSortFilterProxyModel* currentCaptureProxy() const;
     CaptureRecordFilter currentCaptureFilter() const;
     CaptureAssetKind storageKindForRecord(const CaptureRecord& record) const;
+    rv1126b::EventQuery currentEventQuery() const;
+    const rv1126b::VehicleEvent* currentVehicleEvent() const;
+    bool selectedEventDeviceOnline() const;
 
     QAction* addDeviceAction_ = nullptr;
     QAction* connectAction_ = nullptr;
@@ -125,7 +160,18 @@ private:
     QToolButton* pauseCaptureButton_ = nullptr;
     QSpinBox* pauseSecondsSpin_ = nullptr;
     QLabel* pendingCaptureLabel_ = nullptr;
+    QComboBox* eventModeCombo_ = nullptr;
+    QComboBox* eventDeviceScopeCombo_ = nullptr;
+    QWidget* historyFilterWidget_ = nullptr;
+    QLineEdit* historyPlateEdit_ = nullptr;
+    QCheckBox* historyTimeRangeCheck_ = nullptr;
+    QDateTimeEdit* historyStartEdit_ = nullptr;
+    QDateTimeEdit* historyEndEdit_ = nullptr;
+    QToolButton* historyPreviousButton_ = nullptr;
+    QToolButton* historyNextButton_ = nullptr;
+    QLabel* historyPageLabel_ = nullptr;
     VideoWidget* livePreview_ = nullptr;
+    LivePreviewPanel* livePreviewPanel_ = nullptr;
     VideoWidget* snapshotPreview_ = nullptr;
     QSplitter* previewSplitter_ = nullptr;
     QLabel* statusLabel_ = nullptr;
@@ -136,10 +182,17 @@ private:
     CaptureRecordService* captureService_ = nullptr;
     SystemSettingsService* systemSettingsService_ = nullptr;
     MaintenanceController* maintenanceController_ = nullptr;
+    rv1126b::DeviceIntegrationController* integrationController_ = nullptr;
+    rv1126b::EventViewController* eventController_ = nullptr;
+    rv1126b::IRtspPlayer* rtspPlayer_ = nullptr;
     DeviceTableModel* deviceModel_ = nullptr;
     DevicePropertyModel* propertyModel_ = nullptr;
     CaptureRecordTableModel* captureModel_ = nullptr;
     SystemSettings currentSystemSettings_;
     CaptureStorageService storageService_;
     int pendingCaptureCount_ = 0;
+    int historyPage_ = 0;
+    int lastHistoryRowCount_ = 0;
+    bool mockMode_ = false;
+    bool shutdownStarted_ = false;
 };

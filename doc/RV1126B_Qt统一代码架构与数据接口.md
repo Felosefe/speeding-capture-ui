@@ -267,6 +267,7 @@ repository 提供设备、事件、详情、图片、同步锚点和 FTP 任务�
 - 串行化写事务。
 - 通过 context 将 completion 投递回调用线程。
 - 不跨线程传递或复用 `QSqlDatabase` 对象。
+- 支持按完整 `EventIdentity` 精确加载和删除本地事件；删除仅作用于 PC 仓储，不代表删除板端事件。
 
 ### 7.3 `DeviceDiscoveryService`
 
@@ -312,6 +313,8 @@ Online <---------------> Degraded
 - 验证成功后原子替换正式文件。
 - 409 进入 RetryWait，网络错误按退避重试。
 - 断开清理当前设备未完成的 `.part`，不删除正式文件。
+- 用户明确删除本地事件时，先通过 `removeLocal` 删除正式图片，成功后再删除 repository 记录；普通
+  断开和应用退出不得调用该接口。
 
 正式路径：
 

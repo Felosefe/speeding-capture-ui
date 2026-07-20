@@ -40,6 +40,14 @@ public:
         const EventQuery& query,
         QObject* context,
         ApiCompletion<QVector<VehicleEvent>> completion) = 0;
+    virtual RequestId loadEvent(
+        const EventIdentity& identity,
+        QObject* context,
+        ApiCompletion<std::optional<VehicleEvent>> completion) = 0;
+    virtual RequestId deleteEvent(
+        const EventIdentity& identity,
+        QObject* context,
+        ApiCompletion<void> completion) = 0;
     virtual RequestId loadNonTerminalEvents(
         const QString& deviceId,
         QObject* context,
@@ -71,4 +79,3 @@ public:
 };
 
 } // namespace rv1126b
-

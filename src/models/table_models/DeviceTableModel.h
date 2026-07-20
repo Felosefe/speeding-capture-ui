@@ -29,6 +29,7 @@ public:
     QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
 
     void addDevice(const Device& device);
+    int upsertDevice(const Device& device);
     void setConnectionState(int row, DeviceConnectionState state);
     void updateStatus(int row, const DeviceStatus& status);
     void updateConfig(int row, const DeviceConfig& config);
@@ -37,6 +38,7 @@ public:
 
     const Device* deviceAt(int row) const;
     Device* deviceAt(int row);
+    int rowForDeviceId(const QString& deviceId) const;
     int deviceCount() const;
     int onlineCount() const;
 

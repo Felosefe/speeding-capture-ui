@@ -50,6 +50,10 @@ qt_add_executable(CameraManagerApp
     src/models/table_models/DeviceTableModel.h
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
+    src/rv1126b/application/DeviceIntegrationController.cpp
+    src/rv1126b/application/DeviceIntegrationController.h
+    src/rv1126b/application/EventViewController.cpp
+    src/rv1126b/application/EventViewController.h
     src/rv1126b/domain/Models.h
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/ports/IEventRepository.h
@@ -74,6 +78,10 @@ qt_add_executable(CameraManagerApp
     src/services/SystemSettingsService.h
     src/ui/DeviceConfigDialog.cpp
     src/ui/DeviceConfigDialog.h
+    src/ui/DeviceDiscoveryDialog.cpp
+    src/ui/DeviceDiscoveryDialog.h
+    src/ui/LivePreviewPanel.cpp
+    src/ui/LivePreviewPanel.h
     src/ui/SystemSettingsDialog.cpp
     src/ui/SystemSettingsDialog.h
     src/ui/MainWindow.cpp
@@ -240,6 +248,116 @@ target_compile_options(Rv1126bArchitectureTypesTest
 )
 
 add_test(NAME Rv1126bArchitectureTypesTest COMMAND Rv1126bArchitectureTypesTest)
+
+qt_add_executable(DeviceIntegrationControllerTest
+    tests/DeviceIntegrationControllerTest.cpp
+    src/rv1126b/application/DeviceIntegrationController.cpp
+    src/rv1126b/application/DeviceIntegrationController.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IRtspPlayer.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceFleetService.h
+)
+
+target_link_libraries(DeviceIntegrationControllerTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Test
+)
+
+target_compile_options(DeviceIntegrationControllerTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME DeviceIntegrationControllerTest COMMAND DeviceIntegrationControllerTest)
+set_tests_properties(DeviceIntegrationControllerTest PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+qt_add_executable(DeviceIntegrationUiTest
+    tests/DeviceIntegrationUiTest.cpp
+    src/rv1126b/application/DeviceIntegrationController.cpp
+    src/rv1126b/application/DeviceIntegrationController.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IRtspPlayer.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceFleetService.h
+    src/ui/DeviceDiscoveryDialog.cpp
+    src/ui/DeviceDiscoveryDialog.h
+    src/ui/LivePreviewPanel.cpp
+    src/ui/LivePreviewPanel.h
+)
+
+target_link_libraries(DeviceIntegrationUiTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Widgets
+        Qt6::Test
+)
+
+target_compile_options(DeviceIntegrationUiTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME DeviceIntegrationUiTest COMMAND DeviceIntegrationUiTest)
+set_tests_properties(DeviceIntegrationUiTest PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+qt_add_executable(EventViewControllerTest
+    tests/EventViewControllerTest.cpp
+    src/rv1126b/application/EventViewController.cpp
+    src/rv1126b/application/EventViewController.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/EventSyncService.h
+    src/rv1126b/services/EvidenceCache.h
+)
+
+target_link_libraries(EventViewControllerTest
+    PRIVATE Qt6::Core Qt6::Network Qt6::Test
+)
+target_compile_options(EventViewControllerTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME EventViewControllerTest COMMAND EventViewControllerTest)
+
+qt_add_executable(EventViewUiTest
+    tests/EventViewUiTest.cpp
+    src/models/CaptureRecord.h
+    src/models/Device.h
+    src/models/DeviceConfig.h
+    src/models/DeviceStatus.h
+    src/models/table_models/CaptureRecordTableModel.cpp
+    src/models/table_models/CaptureRecordTableModel.h
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/video/VideoWidget.cpp
+    src/video/VideoWidget.h
+)
+
+target_link_libraries(EventViewUiTest
+    PRIVATE Qt6::Core Qt6::Network Qt6::Widgets Qt6::Test
+)
+target_compile_options(EventViewUiTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME EventViewUiTest COMMAND EventViewUiTest)
+set_tests_properties(EventViewUiTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 qt_add_executable(RtspPlayerTest
     tests/RtspPlayerTest.cpp

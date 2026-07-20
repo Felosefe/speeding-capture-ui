@@ -51,6 +51,12 @@ QVariant DeviceTableModel::data(const QModelIndex& index, int role) const
         switch (device.status.connectionState) {
         case DeviceConnectionState::Online:
             return QBrush(QColor(25, 128, 64));
+        case DeviceConnectionState::Connecting:
+        case DeviceConnectionState::Disconnecting:
+            return QBrush(QColor(34, 102, 170));
+        case DeviceConnectionState::Degraded:
+            return QBrush(QColor(190, 125, 20));
+        case DeviceConnectionState::AuthenticationFailed:
         case DeviceConnectionState::Fault:
             return QBrush(QColor(180, 72, 40));
         case DeviceConnectionState::Offline:
@@ -94,6 +100,19 @@ void DeviceTableModel::addDevice(const Device& device)
     beginInsertRows(QModelIndex(), row, row);
     devices_.append(device);
     endInsertRows();
+}
+
+int DeviceTableModel::upsertDevice(const Device& device)
+{
+    const int existingRow = rowForDeviceId(device.id);
+    if (existingRow < 0) {
+        addDevice(device);
+        return devices_.size() - 1;
+    }
+
+    devices_[existingRow] = device;
+    emit dataChanged(index(existingRow, 0), index(existingRow, ColumnCount - 1));
+    return existingRow;
 }
 
 void DeviceTableModel::setConnectionState(int row, DeviceConnectionState state)
@@ -177,6 +196,16 @@ Device* DeviceTableModel::deviceAt(int row)
         return nullptr;
     }
     return &devices_[row];
+}
+
+int DeviceTableModel::rowForDeviceId(const QString& deviceId) const
+{
+    for (int row = 0; row < devices_.size(); ++row) {
+        if (devices_.at(row).id == deviceId) {
+            return row;
+        }
+    }
+    return -1;
 }
 
 int DeviceTableModel::deviceCount() const

@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QFont>
 #include <QLinearGradient>
+#include <QImageReader>
 #include <QPainter>
 #include <QPen>
 #include <QTimer>
@@ -31,12 +32,85 @@ void VideoWidget::setDevice(const Device* device)
 
 void VideoWidget::setLatestRecord(const CaptureRecord* record)
 {
+    hasVehicleEvent_ = false;
     hasLatestRecord_ = record != nullptr;
     if (record) {
         latestRecord_ = *record;
     }
     update();
 }
+
+void VideoWidget::setVehicleEvent(const rv1126b::VehicleEvent* event)
+{
+    hasVehicleEvent_ = event != nullptr;
+    evidenceEntry_.reset();
+    evidenceImage_ = QImage();
+    evidenceMessage_ = QStringLiteral("正在读取本地图片状态…");
+    if (event) vehicleEvent_ = *event;
+    update();
+}
+
+void VideoWidget::setEvidenceState(
+    const std::optional<rv1126b::EvidenceCacheEntry>& entry,
+    bool deviceOnline)
+{
+    evidenceEntry_ = entry;
+    evidenceDeviceOnline_ = deviceOnline;
+    evidenceImage_ = QImage();
+    if (!hasVehicleEvent_) return;
+
+    if (!entry.has_value()) {
+        evidenceMessage_ = deviceOnline ? QStringLiteral("图片尚未缓存，正在请求…")
+                                        : QStringLiteral("设备离线，图片未缓存");
+        update();
+        return;
+    }
+
+    using rv1126b::EvidenceCacheStatus;
+    switch (entry->status) {
+    case EvidenceCacheStatus::Available: {
+        QImageReader reader(entry->localFilePath);
+        reader.setAutoTransform(true);
+        evidenceImage_ = reader.read();
+        evidenceMessage_ = evidenceImage_.isNull()
+            ? QStringLiteral("本地图片损坏或无法解码") : QString();
+        break;
+    }
+    case EvidenceCacheStatus::Queued:
+    case EvidenceCacheStatus::Downloading:
+        evidenceMessage_ = QStringLiteral("图片下载中…");
+        break;
+    case EvidenceCacheStatus::RetryWait:
+        evidenceMessage_ = QStringLiteral("图片处理中，等待重试…");
+        break;
+    case EvidenceCacheStatus::Missing:
+        evidenceMessage_ = entry->failureCode == QStringLiteral("offline_not_cached")
+            ? QStringLiteral("设备离线，图片未缓存")
+            : QStringLiteral("图片未缓存");
+        break;
+    case EvidenceCacheStatus::Failed:
+        evidenceMessage_ = QStringLiteral("图片缓存失败");
+        break;
+    case EvidenceCacheStatus::NotRequested:
+    default:
+        evidenceMessage_ = deviceOnline ? QStringLiteral("图片尚未缓存，正在请求…")
+                                        : QStringLiteral("设备离线，图片未缓存");
+        break;
+    }
+    update();
+}
+
+void VideoWidget::clearVehicleEvent()
+{
+    hasVehicleEvent_ = false;
+    evidenceEntry_.reset();
+    evidenceImage_ = QImage();
+    evidenceMessage_.clear();
+    update();
+}
+
+QString VideoWidget::evidenceMessage() const { return evidenceMessage_; }
+bool VideoWidget::hasDecodedEvidence() const { return !evidenceImage_.isNull(); }
 
 void VideoWidget::setDisplayOptions(const VideoDisplayOptions& options)
 {
@@ -55,6 +129,12 @@ void VideoWidget::paintEvent(QPaintEvent* event)
 
     const QRect rect = this->rect().adjusted(1, 1, -1, -1);
     drawBackground(painter, rect);
+
+    if (mode_ == Mode::Snapshot && hasVehicleEvent_) {
+        drawEvidence(painter, rect);
+        drawVehicleEventOverlay(painter, rect);
+        return;
+    }
 
     if (!hasDevice_) {
         drawEmptyState(painter, rect, QStringLiteral("请选择设备"));
@@ -75,6 +155,45 @@ void VideoWidget::paintEvent(QPaintEvent* event)
     drawVehicleOverlay(painter, rect);
     drawPlateCloseup(painter, rect);
     drawTextOverlay(painter, rect);
+}
+
+void VideoWidget::drawEvidence(QPainter& painter, const QRect& rect) const
+{
+    if (evidenceImage_.isNull()) {
+        drawEmptyState(painter, rect, evidenceMessage_.isEmpty()
+                                         ? QStringLiteral("暂无融合图片")
+                                         : evidenceMessage_);
+        return;
+    }
+    const QSize targetSize = evidenceImage_.size().scaled(rect.size(), Qt::KeepAspectRatio);
+    const QRect target(QPoint(rect.center().x() - targetSize.width() / 2,
+                              rect.center().y() - targetSize.height() / 2), targetSize);
+    painter.drawImage(target, evidenceImage_);
+}
+
+void VideoWidget::drawVehicleEventOverlay(QPainter& painter, const QRect& rect) const
+{
+    const QString time = QDateTime::fromMSecsSinceEpoch(vehicleEvent_.eventTime.epochMs)
+                             .toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+    const QString plate = vehicleEvent_.plateText.isEmpty() ? QStringLiteral("-")
+                                                            : vehicleEvent_.plateText;
+    const QString speed = vehicleEvent_.speedValid
+        ? QStringLiteral("%1 km/h").arg(vehicleEvent_.speedKmh)
+        : QStringLiteral("速度无效");
+    const QString warning = vehicleEvent_.eventTime.quality.value
+            == rv1126b::TimeQuality::BoardEpochUnverified
+        ? QStringLiteral("  ⚠ 板端时间未校验") : QString();
+
+    const QRect overlay(rect.left() + 8, rect.bottom() - 68, rect.width() - 16, 60);
+    painter.fillRect(overlay, QColor(0, 0, 0, 170));
+    painter.setPen(Qt::white);
+    painter.setFont(QFont(QStringLiteral("Microsoft YaHei"), 9));
+    painter.drawText(overlay.adjusted(8, 5, -8, -5), Qt::AlignLeft | Qt::AlignTop,
+                     QStringLiteral("%1  %2  %3\n设备 %4  事件 %5/%6%7")
+                         .arg(time, plate, speed, vehicleEvent_.identity.deviceId)
+                         .arg(vehicleEvent_.identity.eventId)
+                         .arg(vehicleEvent_.identity.trackId)
+                         .arg(warning));
 }
 
 void VideoWidget::advanceFrame()

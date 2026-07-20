@@ -9,13 +9,19 @@
 #include "../services/SystemSettingsService.h"
 #include "../video/VideoWidget.h"
 #include "DeviceConfigDialog.h"
+#include "DeviceDiscoveryDialog.h"
+#include "LivePreviewPanel.h"
 #include "SystemSettingsDialog.h"
 
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCloseEvent>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
+#include <QDateTimeEdit>
 #include <QDir>
 #include <QEvent>
 #include <QFileDialog>
@@ -24,6 +30,7 @@
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPoint>
@@ -45,17 +52,60 @@
 
 #include <optional>
 
+namespace {
+
+DeviceConnectionState uiConnectionState(rv1126b::DeviceSessionState state)
+{
+    using rv1126b::DeviceSessionState;
+    switch (state) {
+    case DeviceSessionState::Connecting:
+        return DeviceConnectionState::Connecting;
+    case DeviceSessionState::Online:
+        return DeviceConnectionState::Online;
+    case DeviceSessionState::Degraded:
+        return DeviceConnectionState::Degraded;
+    case DeviceSessionState::AuthenticationFailed:
+        return DeviceConnectionState::AuthenticationFailed;
+    case DeviceSessionState::Disconnecting:
+        return DeviceConnectionState::Disconnecting;
+    case DeviceSessionState::Disconnected:
+    default:
+        return DeviceConnectionState::Offline;
+    }
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget* parent)
+    : MainWindow(MainWindowDependencies {}, parent)
+{
+}
+
+MainWindow::MainWindow(MainWindowDependencies dependencies, QWidget* parent)
     : QMainWindow(parent)
     , deviceManager_(new DeviceManager(this))
-    , captureService_(new CaptureRecordService(this))
+    , captureService_(dependencies.mockMode ? new CaptureRecordService(this) : nullptr)
     , systemSettingsService_(new SystemSettingsService(this))
     , maintenanceController_(new MaintenanceController(this))
+    , integrationController_(dependencies.mockMode
+                                 ? nullptr
+                                 : new rv1126b::DeviceIntegrationController(
+                                       {dependencies.discovery,
+                                        dependencies.fleet,
+                                        dependencies.secretStore,
+                                        dependencies.player},
+                                       this))
+    , eventController_(dependencies.mockMode
+                           ? nullptr
+                           : new rv1126b::EventViewController(
+                                 {dependencies.eventRepository, dependencies.evidenceCache}, this))
+    , rtspPlayer_(dependencies.player)
     , deviceModel_(new DeviceTableModel(this))
     , propertyModel_(new DevicePropertyModel(this))
     , captureModel_(new CaptureRecordTableModel(this))
     , currentSystemSettings_(systemSettingsService_->load())
     , storageService_(currentSystemSettings_.storage)
+    , mockMode_(dependencies.mockMode)
 {
     setWindowTitle(QStringLiteral("车牌识别雷达测速摄像机管理软件"));
     resize(1360, 820);
@@ -68,34 +118,78 @@ MainWindow::MainWindow(QWidget* parent)
     createStatusBar();
     applySystemSettings(true);
 
-    if (!captureService_->initialize()) {
-        statusBar()->showMessage(QStringLiteral("抓拍记录库初始化失败：%1").arg(captureService_->lastError()), 5000);
+    if (captureService_) {
+        if (!captureService_->initialize()) {
+            statusBar()->showMessage(QStringLiteral("抓拍记录库初始化失败：%1").arg(captureService_->lastError()), 5000);
+        } else {
+            refreshCaptureRecords();
+        }
     } else {
-        refreshCaptureRecords();
+        captureModel_->setVehicleEvents({});
     }
 
     connectDeviceManager();
+    connectIntegrationController();
+    connectEventController();
+    for (rv1126b::EventSyncService* service : dependencies.eventSyncServices) {
+        attachEventSyncService(service);
+    }
     populateInitialData();
 
-    if (currentSystemSettings_.ui.autoConnectOnStart) {
+    if (mockMode_ && currentSystemSettings_.ui.autoConnectOnStart) {
         const int connected = deviceManager_->connectAllDevices();
         statusBar()->showMessage(QStringLiteral("已自动连接 %1 台设备").arg(connected), 2500);
     }
 
     configureMaintenanceController();
     maintenanceController_->start();
+
+    if (!mockMode_ && integrationController_ && !integrationController_->networkServicesAvailable()) {
+        statusBar()->showMessage(QStringLiteral("真实设备网络服务尚未装配；可使用 --mock 启动开发模式"), 8000);
+    }
+    if (!mockMode_ && eventController_ && !eventController_->servicesAvailable()) {
+        statusBar()->showMessage(QStringLiteral("真实事件仓储和图片缓存服务尚未装配；视频预览仍可使用"), 8000);
+    }
+    updateCaptureControls();
+}
+
+void MainWindow::attachEventSyncService(rv1126b::EventSyncService* service)
+{
+    if (eventController_) eventController_->attachSyncService(service);
 }
 
 void MainWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
-    if (event->type() != QEvent::WindowStateChange || !livePreview_ || !snapshotPreview_) {
+    if (event->type() != QEvent::WindowStateChange || !snapshotPreview_) {
         return;
     }
 
     const bool stopVideo = currentSystemSettings_.ui.stopVideoQueryWhenMinimized && isMinimized();
-    livePreview_->setUpdatesEnabled(!stopVideo);
+    if (livePreview_) {
+        livePreview_->setUpdatesEnabled(!stopVideo);
+    }
+    if (livePreviewPanel_) {
+        livePreviewPanel_->setUpdatesEnabled(!stopVideo);
+    }
     snapshotPreview_->setUpdatesEnabled(!stopVideo);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (!shutdownStarted_) {
+        shutdownStarted_ = true;
+        if (eventController_) {
+            eventController_->shutdown();
+        }
+        if (integrationController_) {
+            integrationController_->shutdown();
+        }
+        if (mockMode_) {
+            deviceManager_->disconnectAllDevices();
+        }
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::createActions()
@@ -104,7 +198,10 @@ void MainWindow::createActions()
         return style()->standardIcon(pixmap);
     };
 
-    addDeviceAction_ = new QAction(icon(QStyle::SP_FileDialogNewFolder), QStringLiteral("添加设备"), this);
+    addDeviceAction_ = new QAction(icon(QStyle::SP_FileDialogNewFolder),
+                                   mockMode_ ? QStringLiteral("添加模拟设备")
+                                             : QStringLiteral("搜索设备"),
+                                   this);
     connect(addDeviceAction_, &QAction::triggered, this, &MainWindow::addDevice);
 
     connectAction_ = new QAction(icon(QStyle::SP_DialogApplyButton), QStringLiteral("连接"), this);
@@ -125,11 +222,18 @@ void MainWindow::createActions()
     syncTimeAction_ = new QAction(icon(QStyle::SP_DialogApplyButton), QStringLiteral("同步时间"), this);
     connect(syncTimeAction_, &QAction::triggered, this, &MainWindow::syncSelectedDeviceTime);
 
+    if (!mockMode_) {
+        configAction_->setEnabled(false);
+        captureAction_->setEnabled(false);
+        rebootAction_->setEnabled(false);
+        syncTimeAction_->setEnabled(false);
+    }
+
     deleteCaptureAction_ = new QAction(icon(QStyle::SP_TrashIcon), QStringLiteral("删除记录"), this);
     connect(deleteCaptureAction_, &QAction::triggered, this, &MainWindow::deleteSelectedCapture);
 
     clearCaptureAction_ = new QAction(icon(QStyle::SP_DialogResetButton), QStringLiteral("清空记录"), this);
-    clearCaptureAction_->setEnabled(false);
+    clearCaptureAction_->setEnabled(!mockMode_);
     connect(clearCaptureAction_, &QAction::triggered, this, &MainWindow::clearCaptureRecords);
 
     globalSettingsAction_ = new QAction(icon(QStyle::SP_FileDialogContentsView), QStringLiteral("全局设置"), this);
@@ -157,6 +261,7 @@ void MainWindow::createToolBar()
     toolbar->addAction(syncTimeAction_);
     toolbar->addSeparator();
     toolbar->addAction(deleteCaptureAction_);
+    toolbar->addAction(clearCaptureAction_);
     toolbar->addSeparator();
     toolbar->addAction(refreshAction_);
     toolbar->addAction(exportAction_);
@@ -169,7 +274,11 @@ void MainWindow::createCentralLayout()
     deviceTable_ = createDeviceTable();
     propertyTable_ = createPropertyTable();
     QWidget* capturePanel = createCaptureRecordPanel();
-    livePreview_ = new VideoWidget(VideoWidget::Mode::Live, this);
+    if (mockMode_) {
+        livePreview_ = new VideoWidget(VideoWidget::Mode::Live, this);
+    } else {
+        livePreviewPanel_ = new LivePreviewPanel(rtspPlayer_, this);
+    }
     snapshotPreview_ = new VideoWidget(VideoWidget::Mode::Snapshot, this);
 
     auto* leftSplitter = new QSplitter(Qt::Vertical, this);
@@ -179,7 +288,8 @@ void MainWindow::createCentralLayout()
     leftSplitter->setStretchFactor(1, 2);
 
     previewSplitter_ = new QSplitter(Qt::Horizontal, this);
-    previewSplitter_->addWidget(livePreview_);
+    previewSplitter_->addWidget(mockMode_ ? static_cast<QWidget*>(livePreview_)
+                                          : static_cast<QWidget*>(livePreviewPanel_));
     previewSplitter_->addWidget(snapshotPreview_);
     previewSplitter_->setStretchFactor(0, 3);
     previewSplitter_->setStretchFactor(1, 2);
@@ -233,10 +343,100 @@ void MainWindow::connectDeviceManager()
     connect(deviceManager_, &DeviceManager::errorOccurred, this, &MainWindow::handleDeviceError);
 }
 
+void MainWindow::connectIntegrationController()
+{
+    if (!integrationController_) {
+        return;
+    }
+    connect(integrationController_, &rv1126b::DeviceIntegrationController::discoveredDeviceUpserted,
+            this, &MainWindow::handleDiscoveredDevice);
+    connect(integrationController_, &rv1126b::DeviceIntegrationController::sessionChanged,
+            this, &MainWindow::handleSessionChanged);
+    connect(integrationController_, &rv1126b::DeviceIntegrationController::selectedVideoDeviceChanged,
+            this, &MainWindow::handleSelectedVideoDeviceChanged);
+    connect(integrationController_, &rv1126b::DeviceIntegrationController::userError,
+            this, &MainWindow::handleIntegrationError);
+    if (livePreviewPanel_) {
+        connect(integrationController_, &rv1126b::DeviceIntegrationController::playbackStateChanged,
+                livePreviewPanel_, &LivePreviewPanel::setPlaybackState);
+        connect(integrationController_, &rv1126b::DeviceIntegrationController::playbackError,
+                livePreviewPanel_, &LivePreviewPanel::setPlaybackError);
+        connect(livePreviewPanel_, &LivePreviewPanel::streamRoleChanged,
+                integrationController_, &rv1126b::DeviceIntegrationController::setStreamRole);
+        if (rtspPlayer_) {
+            livePreviewPanel_->setPlaybackState(rtspPlayer_->state());
+        }
+    }
+    for (const rv1126b::DeviceSessionSnapshot& snapshot : integrationController_->sessionSnapshots()) {
+        handleSessionChanged(snapshot);
+    }
+}
+
+void MainWindow::connectEventController()
+{
+    if (!eventController_) return;
+
+    connect(eventController_, &rv1126b::EventViewController::eventsReset,
+            this, [this](const QVector<rv1126b::VehicleEvent>& events) {
+                captureModel_->setVehicleEvents(events);
+                pendingCaptureCount_ = 0;
+                if (snapshotPreview_) snapshotPreview_->clearVehicleEvent();
+                updateCaptureControls();
+            });
+    connect(eventController_, &rv1126b::EventViewController::eventUpserted,
+            this, [this](const rv1126b::VehicleEvent& event) {
+                captureModel_->upsertVehicleEvent(
+                    event, currentSystemSettings_.ui.captureListMaxRows);
+                updateCaptureControls();
+            });
+    connect(eventController_, &rv1126b::EventViewController::eventDeleted,
+            this, [this](const rv1126b::EventIdentity& identity) {
+                captureModel_->removeVehicleEvent(identity);
+                if (snapshotPreview_) snapshotPreview_->clearVehicleEvent();
+                updateCaptureControls();
+            });
+    connect(eventController_, &rv1126b::EventViewController::evidenceChanged,
+            this, [this](const rv1126b::EvidenceCacheEntry& entry) {
+                captureModel_->setEvidenceState(entry);
+                const rv1126b::VehicleEvent* event = currentVehicleEvent();
+                if (event && event->identity == entry.identity && snapshotPreview_) {
+                    snapshotPreview_->setEvidenceState(entry, selectedEventDeviceOnline());
+                }
+            });
+    connect(eventController_, &rv1126b::EventViewController::pendingChangeCountChanged,
+            this, [this](int count) {
+                pendingCaptureCount_ = count;
+                updateCaptureControls();
+            });
+    connect(eventController_, &rv1126b::EventViewController::queryFinished,
+            this, [this](int rowCount) {
+                lastHistoryRowCount_ = rowCount;
+                if (historyPreviousButton_) historyPreviousButton_->setEnabled(historyPage_ > 0);
+                if (historyNextButton_) historyNextButton_->setEnabled(
+                    eventModeCombo_ && eventModeCombo_->currentIndex() == 1
+                    && rowCount == rv1126b::EventViewController::HistoryPageSize);
+                if (historyPageLabel_) historyPageLabel_->setText(QStringLiteral("第 %1 页").arg(historyPage_ + 1));
+            });
+    connect(eventController_, &rv1126b::EventViewController::deleteFinished,
+            this, [this](int deleted, int failed) {
+                statusBar()->showMessage(QStringLiteral("本地删除完成：成功 %1 条，失败 %2 条；板端保留事件可能再次同步")
+                                             .arg(deleted).arg(failed), 6000);
+                refreshCaptureRecords();
+            });
+    connect(eventController_, &rv1126b::EventViewController::exportFinished,
+            this, [this](const QString& path, int count) {
+                statusBar()->showMessage(QStringLiteral("已导出 %1 条真实事件：%2").arg(count).arg(path), 5000);
+            });
+    connect(eventController_, &rv1126b::EventViewController::userError,
+            this, &MainWindow::handleIntegrationError);
+}
+
 void MainWindow::populateInitialData()
 {
-    deviceManager_->seedMockDevices(3);
-    selectDeviceRow(0);
+    if (mockMode_) {
+        deviceManager_->seedMockDevices(3);
+        selectDeviceRow(0);
+    }
     updateDeviceProperties();
     updateStatusText();
 }
@@ -244,9 +444,10 @@ void MainWindow::populateInitialData()
 void MainWindow::updateStatusText()
 {
     const int visibleOrPendingCaptureCount = captureModel_->recordCount() + pendingCaptureCount_;
-    statusLabel_->setText(QStringLiteral("就绪 | 设备 %1 台 | 在线 %2 台 | 抓拍记录 %3 条")
+    statusLabel_->setText(QStringLiteral("就绪 | 设备 %1 台 | 在线 %2 台 | %3 %4 条")
                               .arg(deviceModel_->deviceCount())
                               .arg(deviceModel_->onlineCount())
+                              .arg(mockMode_ ? QStringLiteral("抓拍记录") : QStringLiteral("事件记录"))
                               .arg(visibleOrPendingCaptureCount));
 }
 
@@ -282,7 +483,7 @@ void MainWindow::applySystemSettings(bool initialApply)
     configureMaintenanceController();
     updateStartupRegistration(currentSystemSettings_.maintenance.startWithSystem);
 
-    if (captureService_) {
+    if (captureService_ || eventController_) {
         refreshCaptureRecords();
     }
 
@@ -302,6 +503,9 @@ void MainWindow::applyCaptureColumnVisibility()
         {CaptureRecordTableModel::DirectionColumn, QStringLiteral("direction")},
         {CaptureRecordTableModel::CoordinateColumn, QStringLiteral("coordinate")},
         {CaptureRecordTableModel::RemarkColumn, QStringLiteral("remark")},
+        {CaptureRecordTableModel::SpeedColumn, QStringLiteral("speed")},
+        {CaptureRecordTableModel::TimeQualityColumn, QStringLiteral("timeQuality")},
+        {CaptureRecordTableModel::EvidenceStatusColumn, QStringLiteral("evidenceStatus")},
     };
     const QList<QTableView*> tables = {allCaptureTable_, validCaptureTable_, unknownCaptureTable_};
     for (QTableView* table : tables) {
@@ -309,7 +513,10 @@ void MainWindow::applyCaptureColumnVisibility()
             continue;
         }
         for (auto it = columns.begin(); it != columns.end(); ++it) {
-            table->setColumnHidden(it.key(), !currentSystemSettings_.ui.captureListFields.contains(it.value()));
+            const bool realOnlyColumn = it.key() >= CaptureRecordTableModel::SpeedColumn;
+            table->setColumnHidden(
+                it.key(), !(realOnlyColumn && !mockMode_)
+                              && !currentSystemSettings_.ui.captureListFields.contains(it.value()));
         }
     }
 }
@@ -409,6 +616,12 @@ QTableView* MainWindow::createDeviceTable()
     configureTableView(table);
 
     connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, &MainWindow::updateDeviceProperties);
+    connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this]() {
+        if (!mockMode_ && eventDeviceScopeCombo_ && eventDeviceScopeCombo_->currentIndex() == 0) {
+            historyPage_ = 0;
+            refreshCaptureRecords();
+        }
+    });
     connect(table, &QTableView::customContextMenuRequested, this, &MainWindow::showDeviceContextMenu);
 
     return table;
@@ -432,6 +645,24 @@ QWidget* MainWindow::createCaptureRecordPanel()
 
     auto* controls = new QHBoxLayout();
     controls->setContentsMargins(0, 0, 0, 0);
+
+    if (!mockMode_) {
+        eventModeCombo_ = new QComboBox(panel);
+        eventModeCombo_->setObjectName(QStringLiteral("eventViewModeCombo"));
+        eventModeCombo_->addItem(QStringLiteral("实时事件"), QStringLiteral("realtime"));
+        eventModeCombo_->addItem(QStringLiteral("本地历史"), QStringLiteral("history"));
+        connect(eventModeCombo_, &QComboBox::currentIndexChanged,
+                this, &MainWindow::changeEventViewMode);
+        controls->addWidget(eventModeCombo_);
+
+        eventDeviceScopeCombo_ = new QComboBox(panel);
+        eventDeviceScopeCombo_->setObjectName(QStringLiteral("eventDeviceScopeCombo"));
+        eventDeviceScopeCombo_->addItem(QStringLiteral("当前设备"), QStringLiteral("current"));
+        eventDeviceScopeCombo_->addItem(QStringLiteral("全部设备"), QStringLiteral("all"));
+        connect(eventDeviceScopeCombo_, &QComboBox::currentIndexChanged,
+                this, [this]() { historyPage_ = 0; refreshCaptureRecords(); });
+        controls->addWidget(eventDeviceScopeCombo_);
+    }
 
     auto* refreshButton = new QToolButton(panel);
     refreshButton->setDefaultAction(refreshAction_);
@@ -463,6 +694,56 @@ QWidget* MainWindow::createCaptureRecordPanel()
     controls->addWidget(exportButton);
 
     rootLayout->addLayout(controls);
+
+    if (!mockMode_) {
+        historyFilterWidget_ = new QWidget(panel);
+        historyFilterWidget_->setObjectName(QStringLiteral("historyFilterWidget"));
+        auto* historyControls = new QHBoxLayout(historyFilterWidget_);
+        historyControls->setContentsMargins(0, 0, 0, 0);
+        historyControls->addWidget(new QLabel(QStringLiteral("车牌"), historyFilterWidget_));
+        historyPlateEdit_ = new QLineEdit(historyFilterWidget_);
+        historyPlateEdit_->setObjectName(QStringLiteral("historyPlateEdit"));
+        historyPlateEdit_->setPlaceholderText(QStringLiteral("包含文本"));
+        historyPlateEdit_->setMaximumWidth(130);
+        historyControls->addWidget(historyPlateEdit_);
+        historyTimeRangeCheck_ = new QCheckBox(QStringLiteral("时间范围"), historyFilterWidget_);
+        historyControls->addWidget(historyTimeRangeCheck_);
+        historyStartEdit_ = new QDateTimeEdit(QDateTime::currentDateTime().addDays(-1), historyFilterWidget_);
+        historyStartEdit_->setObjectName(QStringLiteral("historyStartEdit"));
+        historyStartEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        historyStartEdit_->setCalendarPopup(true);
+        historyEndEdit_ = new QDateTimeEdit(QDateTime::currentDateTime(), historyFilterWidget_);
+        historyEndEdit_->setObjectName(QStringLiteral("historyEndEdit"));
+        historyEndEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        historyEndEdit_->setCalendarPopup(true);
+        historyControls->addWidget(historyStartEdit_);
+        historyControls->addWidget(new QLabel(QStringLiteral("至"), historyFilterWidget_));
+        historyControls->addWidget(historyEndEdit_);
+        auto* applyHistoryButton = new QToolButton(historyFilterWidget_);
+        applyHistoryButton->setObjectName(QStringLiteral("historyApplyButton"));
+        applyHistoryButton->setText(QStringLiteral("查询"));
+        connect(applyHistoryButton, &QToolButton::clicked, this, [this]() {
+            historyPage_ = 0;
+            refreshCaptureRecords();
+        });
+        historyControls->addWidget(applyHistoryButton);
+        historyControls->addStretch(1);
+        historyPreviousButton_ = new QToolButton(historyFilterWidget_);
+        historyPreviousButton_->setObjectName(QStringLiteral("historyPreviousButton"));
+        historyPreviousButton_->setText(QStringLiteral("上一页"));
+        connect(historyPreviousButton_, &QToolButton::clicked, this, &MainWindow::previousHistoryPage);
+        historyControls->addWidget(historyPreviousButton_);
+        historyPageLabel_ = new QLabel(QStringLiteral("第 1 页"), historyFilterWidget_);
+        historyPageLabel_->setObjectName(QStringLiteral("historyPageLabel"));
+        historyControls->addWidget(historyPageLabel_);
+        historyNextButton_ = new QToolButton(historyFilterWidget_);
+        historyNextButton_->setObjectName(QStringLiteral("historyNextButton"));
+        historyNextButton_->setText(QStringLiteral("下一页"));
+        connect(historyNextButton_, &QToolButton::clicked, this, &MainWindow::nextHistoryPage);
+        historyControls->addWidget(historyNextButton_);
+        historyFilterWidget_->setVisible(false);
+        rootLayout->addWidget(historyFilterWidget_);
+    }
 
     allCaptureProxy_ = createCaptureProxy(QString());
     validCaptureProxy_ = createCaptureProxy(QStringLiteral("valid"));
@@ -499,6 +780,7 @@ QTableView* MainWindow::createCaptureTable(QSortFilterProxyModel* proxyModel)
 
     connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this]() {
         updateCaptureControls();
+        updateSelectedEvidence();
     });
 
     return table;
@@ -536,10 +818,15 @@ void MainWindow::updateVideoWidgets()
         : std::nullopt;
     const CaptureRecord* latestRecordPtr = latestRecord ? &(*latestRecord) : nullptr;
 
-    livePreview_->setDevice(device);
-    livePreview_->setLatestRecord(latestRecordPtr);
+    if (livePreview_) {
+        livePreview_->setDevice(device);
+        livePreview_->setLatestRecord(latestRecordPtr);
+    }
+    if (livePreviewPanel_) {
+        livePreviewPanel_->setCurrentDevice(device ? device->id : QString());
+    }
     snapshotPreview_->setDevice(device);
-    snapshotPreview_->setLatestRecord(latestRecordPtr);
+    if (mockMode_) snapshotPreview_->setLatestRecord(latestRecordPtr);
 }
 
 void MainWindow::updateCaptureControls()
@@ -556,7 +843,17 @@ void MainWindow::updateCaptureControls()
 
     if (deleteCaptureAction_) {
         const QTableView* table = currentCaptureTable();
-        deleteCaptureAction_->setEnabled(table && table->currentIndex().isValid());
+        deleteCaptureAction_->setEnabled(
+            table && table->currentIndex().isValid()
+            && (mockMode_ || (eventController_ && eventController_->servicesAvailable())));
+    }
+    if (clearCaptureAction_) {
+        clearCaptureAction_->setEnabled(!mockMode_ && eventController_
+                                        && eventController_->servicesAvailable()
+                                        && eventModeCombo_ && eventModeCombo_->currentIndex() == 1);
+    }
+    if (exportAction_) {
+        exportAction_->setEnabled(mockMode_ || (eventController_ && eventController_->servicesAvailable()));
     }
 
     updateStatusText();
@@ -629,11 +926,57 @@ CaptureAssetKind MainWindow::storageKindForRecord(const CaptureRecord& record) c
 
 void MainWindow::addDevice()
 {
-    deviceManager_->addMockDevice();
-    selectDeviceRow(deviceModel_->deviceCount() - 1);
-    updateDeviceProperties();
-    updateStatusText();
-    statusBar()->showMessage(QStringLiteral("已添加模拟设备"), 2500);
+    if (mockMode_) {
+        deviceManager_->addMockDevice();
+        selectDeviceRow(deviceModel_->deviceCount() - 1);
+        updateDeviceProperties();
+        updateStatusText();
+        statusBar()->showMessage(QStringLiteral("已添加模拟设备"), 2500);
+        return;
+    }
+
+    DeviceDiscoveryDialog dialog(integrationController_, {}, this);
+    dialog.exec();
+}
+
+rv1126b::EventQuery MainWindow::currentEventQuery() const
+{
+    rv1126b::EventQuery query;
+    const bool allDevices = eventDeviceScopeCombo_ && eventDeviceScopeCombo_->currentIndex() == 1;
+    if (!allDevices) {
+        if (const Device* device = deviceModel_->deviceAt(currentDeviceRow())) query.deviceId = device->id;
+    }
+    const bool historyMode = eventModeCombo_ && eventModeCombo_->currentIndex() == 1;
+    if (historyMode) {
+        const QString plate = historyPlateEdit_ ? historyPlateEdit_->text().trimmed() : QString();
+        if (!plate.isEmpty()) query.plateText = plate;
+        if (historyTimeRangeCheck_ && historyTimeRangeCheck_->isChecked()) {
+            query.startEpochMs = historyStartEdit_->dateTime().toMSecsSinceEpoch();
+            query.endEpochMs = historyEndEdit_->dateTime().toMSecsSinceEpoch();
+        }
+        query.limit = rv1126b::EventViewController::HistoryPageSize;
+        query.offset = historyPage_ * query.limit;
+    } else {
+        query.limit = qMax(1, currentSystemSettings_.ui.captureListMaxRows);
+        query.offset = 0;
+    }
+    query.newestFirst = true;
+    return query;
+}
+
+const rv1126b::VehicleEvent* MainWindow::currentVehicleEvent() const
+{
+    return captureModel_ ? captureModel_->vehicleEventAt(currentCaptureRow()) : nullptr;
+}
+
+bool MainWindow::selectedEventDeviceOnline() const
+{
+    const rv1126b::VehicleEvent* event = currentVehicleEvent();
+    if (!event) return false;
+    const Device* device = deviceModel_->deviceAt(deviceModel_->rowForDeviceId(event->identity.deviceId));
+    if (!device) return false;
+    return device->status.connectionState == DeviceConnectionState::Online
+        || device->status.connectionState == DeviceConnectionState::Degraded;
 }
 
 void MainWindow::connectSelectedDevice()
@@ -641,6 +984,13 @@ void MainWindow::connectSelectedDevice()
     const int row = currentDeviceRow();
     if (row < 0) {
         statusBar()->showMessage(QStringLiteral("请先选择一个设备"), 2500);
+        return;
+    }
+
+    if (!mockMode_) {
+        const Device* device = deviceModel_->deviceAt(row);
+        DeviceDiscoveryDialog dialog(integrationController_, device ? device->id : QString(), this);
+        dialog.exec();
         return;
     }
 
@@ -657,7 +1007,15 @@ void MainWindow::disconnectSelectedDevice()
         return;
     }
 
-    deviceManager_->disconnectDevice(row);
+    if (!mockMode_) {
+        const Device* device = deviceModel_->deviceAt(row);
+        if (device && integrationController_) {
+            if (eventController_) eventController_->stopDevice(device->id);
+            integrationController_->disconnectDevice(device->id);
+        }
+    } else {
+        deviceManager_->disconnectDevice(row);
+    }
     statusBar()->showMessage(QStringLiteral("设备已断开"), 2500);
 }
 
@@ -743,6 +1101,17 @@ void MainWindow::openGlobalSettings()
 
 void MainWindow::refreshCaptureRecords()
 {
+    if (!mockMode_) {
+        if (!eventController_) return;
+        const rv1126b::EventQuery query = currentEventQuery();
+        if (eventModeCombo_ && eventModeCombo_->currentIndex() == 1) {
+            eventController_->queryHistory(query);
+        } else {
+            eventController_->refreshRealtime(query.deviceId.value_or(QString()),
+                                              !query.deviceId.has_value(), query.limit);
+        }
+        return;
+    }
     if (!captureService_) {
         return;
     }
@@ -756,6 +1125,7 @@ void MainWindow::refreshCaptureRecords()
 
 void MainWindow::toggleCapturePause(bool paused)
 {
+    if (!mockMode_ && eventController_) eventController_->setPaused(paused);
     if (paused) {
         const int seconds = pauseSecondsSpin_ ? pauseSecondsSpin_->value() : 30;
         capturePauseTimer_->start(seconds * 1000);
@@ -792,7 +1162,12 @@ void MainWindow::exportCaptureRecords()
         return;
     }
 
-    if (!captureService_->exportCsv(currentCaptureFilter(), path)) {
+    if (!mockMode_) {
+        if (eventController_) eventController_->exportHistory(currentEventQuery(), path);
+        return;
+    }
+
+    if (!captureService_ || !captureService_->exportCsv(currentCaptureFilter(), path)) {
         QMessageBox::warning(this, QStringLiteral("导出抓拍记录"), captureService_->lastError());
         return;
     }
@@ -803,6 +1178,19 @@ void MainWindow::exportCaptureRecords()
 void MainWindow::deleteSelectedCapture()
 {
     const int sourceRow = currentCaptureRow();
+    if (!mockMode_) {
+        const rv1126b::VehicleEvent* event = captureModel_->vehicleEventAt(sourceRow);
+        if (!event || !eventController_) {
+            statusBar()->showMessage(QStringLiteral("请先选择一条真实事件"), 2500);
+            return;
+        }
+        const auto answer = QMessageBox::warning(
+            this, QStringLiteral("删除本地事件"),
+            QStringLiteral("将删除 PC 本地事件及融合图片。板端不支持删除，若事件仍在板端保留期内，后续同步可能重新补回。是否继续？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer == QMessageBox::Yes) eventController_->deleteLocalEvent(*event);
+        return;
+    }
     const CaptureRecord* record = captureModel_->recordAt(sourceRow);
     if (!record) {
         statusBar()->showMessage(QStringLiteral("请先选择一条抓拍记录"), 2500);
@@ -821,7 +1209,19 @@ void MainWindow::deleteSelectedCapture()
 
 void MainWindow::clearCaptureRecords()
 {
-    statusBar()->showMessage(QStringLiteral("持久化台账未启用一键清空，请逐条删除需要移除的记录"), 2500);
+    if (mockMode_ || !eventController_ || !eventModeCombo_ || eventModeCombo_->currentIndex() != 1) {
+        statusBar()->showMessage(QStringLiteral("请在本地历史模式下按当前筛选条件清空"), 2500);
+        return;
+    }
+    const auto answer = QMessageBox::warning(
+        this, QStringLiteral("清空本地历史"),
+        QStringLiteral("将删除当前设备、车牌和时间筛选匹配的全部 PC 本地事件及图片，而不只是当前页。板端保留事件可能再次同步。是否继续？"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+        rv1126b::EventQuery query = currentEventQuery();
+        query.offset = 0;
+        eventController_->clearLocalHistory(query);
+    }
 }
 
 void MainWindow::showActionMessage()
@@ -841,6 +1241,14 @@ void MainWindow::updateDeviceProperties()
     const CaptureRecord* latestRecordPtr = latestRecord ? &(*latestRecord) : nullptr;
 
     propertyModel_->setDevice(device, latestRecordPtr);
+    if (!mockMode_
+        && integrationController_
+        && device
+        && integrationController_->selectedVideoDeviceId() != device->id
+        && (device->status.connectionState == DeviceConnectionState::Online
+            || device->status.connectionState == DeviceConnectionState::Degraded)) {
+        integrationController_->selectVideoDevice(device->id);
+    }
     updateVideoWidgets();
     updateStatusText();
 }
@@ -920,4 +1328,117 @@ void MainWindow::handleDeviceError(int row, const QString& message)
     const Device* device = deviceModel_->deviceAt(row);
     const QString prefix = device ? device->name : QStringLiteral("设备");
     statusBar()->showMessage(QStringLiteral("%1：%2").arg(prefix, message), 3500);
+}
+
+void MainWindow::handleDiscoveredDevice(const rv1126b::DiscoveredDeviceDto& discovered)
+{
+    Device device;
+    const int existingRow = deviceModel_->rowForDeviceId(discovered.deviceId);
+    if (const Device* existing = deviceModel_->deviceAt(existingRow)) {
+        device = *existing;
+    }
+    device.id = discovered.deviceId;
+    device.name = discovered.deviceModel.isEmpty()
+        ? discovered.deviceId
+        : QStringLiteral("%1 · %2").arg(discovered.deviceModel, discovered.deviceId);
+    device.ipAddress = discovered.ipv4;
+    device.port = discovered.apiUrl.port(18080);
+    device.status.firmwareVersion = discovered.releaseVersion;
+    const int row = deviceModel_->upsertDevice(device);
+    if (currentDeviceRow() < 0) {
+        selectDeviceRow(row);
+    }
+    updateStatusText();
+}
+
+void MainWindow::handleSessionChanged(const rv1126b::DeviceSessionSnapshot& snapshot)
+{
+    if (eventController_) eventController_->setDeviceSession(snapshot);
+    int row = deviceModel_->rowForDeviceId(snapshot.profile.deviceId);
+    if (row < 0) {
+        Device device;
+        device.id = snapshot.profile.deviceId;
+        device.name = snapshot.profile.deviceModel.isEmpty()
+            ? snapshot.profile.deviceId
+            : QStringLiteral("%1 · %2").arg(snapshot.profile.deviceModel,
+                                             snapshot.profile.deviceId);
+        device.ipAddress = snapshot.profile.endpoint.ipv4;
+        device.port = snapshot.profile.endpoint.httpPort;
+        device.status.firmwareVersion = snapshot.profile.releaseVersion;
+        row = deviceModel_->upsertDevice(device);
+    }
+
+    const Device* existingDevice = deviceModel_->deviceAt(row);
+    if (!existingDevice) {
+        return;
+    }
+    Device device = *existingDevice;
+    device.ipAddress = snapshot.profile.endpoint.ipv4;
+    device.port = snapshot.profile.endpoint.httpPort;
+    device.status.connectionState = uiConnectionState(snapshot.state);
+    device.status.runningState = connectionStateText(device.status.connectionState);
+    device.status.firmwareVersion = snapshot.profile.releaseVersion;
+    device.status.lastHeartbeat = snapshot.lastHealthEpochMs > 0
+        ? QDateTime::fromMSecsSinceEpoch(snapshot.lastHealthEpochMs)
+        : QDateTime();
+    deviceModel_->upsertDevice(device);
+    if (currentDeviceRow() < 0) {
+        selectDeviceRow(row);
+    }
+    if (row == currentDeviceRow()) {
+        updateDeviceProperties();
+    }
+    updateStatusText();
+}
+
+void MainWindow::handleSelectedVideoDeviceChanged(const QString& deviceId)
+{
+    const int row = deviceModel_->rowForDeviceId(deviceId);
+    if (row >= 0 && row != currentDeviceRow()) {
+        selectDeviceRow(row);
+    }
+    if (livePreviewPanel_) {
+        livePreviewPanel_->setCurrentDevice(deviceId);
+    }
+}
+
+void MainWindow::updateSelectedEvidence()
+{
+    if (mockMode_ || !snapshotPreview_) return;
+    const int row = currentCaptureRow();
+    const rv1126b::VehicleEvent* event = captureModel_->vehicleEventAt(row);
+    if (!event) {
+        snapshotPreview_->clearVehicleEvent();
+        return;
+    }
+    snapshotPreview_->setVehicleEvent(event);
+    snapshotPreview_->setEvidenceState(captureModel_->evidenceStateAt(row), selectedEventDeviceOnline());
+    if (eventController_) eventController_->requestEvidence(*event);
+}
+
+void MainWindow::changeEventViewMode()
+{
+    historyPage_ = 0;
+    if (historyFilterWidget_) historyFilterWidget_->setVisible(eventModeCombo_->currentIndex() == 1);
+    updateCaptureControls();
+    refreshCaptureRecords();
+}
+
+void MainWindow::previousHistoryPage()
+{
+    if (historyPage_ <= 0) return;
+    --historyPage_;
+    refreshCaptureRecords();
+}
+
+void MainWindow::nextHistoryPage()
+{
+    if (lastHistoryRowCount_ < rv1126b::EventViewController::HistoryPageSize) return;
+    ++historyPage_;
+    refreshCaptureRecords();
+}
+
+void MainWindow::handleIntegrationError(const QString&, const QString& message)
+{
+    statusBar()->showMessage(message, 5000);
 }

@@ -23,6 +23,10 @@ public:
     ~EvidenceCache() override = default;
 
     virtual void enqueue(const VehicleEvent& event) = 0;
+    virtual RequestId removeLocal(
+        const VehicleEvent& event,
+        QObject* context,
+        ApiCompletion<void> completion) = 0;
     virtual void cancel(const EventIdentity& identity) = 0;
     virtual void cancelDevice(const QString& deviceId) = 0;
     virtual void cancelAll() = 0;
@@ -34,4 +38,3 @@ signals:
 };
 
 } // namespace rv1126b
-
