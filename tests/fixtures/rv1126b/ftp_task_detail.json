@@ -1,0 +1,32 @@
+{
+  "task_id": "ftp_task_001",
+  "state": "running",
+  "start_epoch_ms": 1783900800000,
+  "end_epoch_ms": 1783987200000,
+  "created_epoch_ms": 1783987200001,
+  "target_ids": ["server1", "server2"],
+  "targets": [
+    {
+      "target_id": "server1",
+      "state": "done",
+      "total": 10,
+      "pending": 0,
+      "uploading": 0,
+      "done": 10,
+      "failed": 0,
+      "attempts": 1,
+      "last_error": ""
+    },
+    {
+      "target_id": "server2",
+      "state": "failed",
+      "total": 10,
+      "pending": 0,
+      "uploading": 0,
+      "done": 8,
+      "failed": 2,
+      "attempts": 3,
+      "last_error": "ftp_timeout"
+    }
+  ]
+}

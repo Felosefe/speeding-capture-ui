@@ -1,0 +1,363 @@
+#include "../src/rv1126b/network/BoardApiClient.h"
+#include "../src/rv1126b/protocol/BoardApiCodec.h"
+
+#include <QDir>
+#include <QFile>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTemporaryDir>
+#include <QtTest>
+
+#include <optional>
+
+using namespace rv1126b;
+
+namespace {
+
+class TestSecretStore final : public ISecretStore
+{
+public:
+    explicit TestSecretStore(QByteArray token, QObject* parent = nullptr)
+        : ISecretStore(parent)
+        , token_(std::move(token))
+    {
+    }
+
+    QString credentialKeyForDevice(const QString& deviceId) const override
+    {
+        return QStringLiteral("test/") + deviceId;
+    }
+
+    ApiResult<QString> storeToken(const QString&, SecretValue) override
+    {
+        return ApiResult<QString>::failure(error(QStringLiteral("unsupported")));
+    }
+
+    ApiResult<SecretValue> loadToken(const QString&) const override
+    {
+        return ApiResult<SecretValue>::success(SecretValue(token_));
+    }
+
+    ApiResult<void> removeToken(const QString&) override
+    {
+        return ApiResult<void>::success();
+    }
+
+private:
+    static ApiError error(const QString& code)
+    {
+        ApiError value;
+        value.code = code;
+        value.category = ApiErrorCategory::Storage;
+        return value;
+    }
+
+    QByteArray token_;
+};
+
+class TestHttpServer final : public QTcpServer
+{
+public:
+    struct Response {
+        int status = 200;
+        QByteArray contentType = "application/json";
+        QByteArray body;
+        std::optional<qint64> advertisedContentLength;
+        bool includeContentLength = true;
+    };
+
+    explicit TestHttpServer(QObject* parent = nullptr)
+        : QTcpServer(parent)
+    {
+        connect(this, &QTcpServer::newConnection, this, [this] {
+            while (hasPendingConnections()) {
+                QTcpSocket* socket = nextPendingConnection();
+                connect(socket, &QTcpSocket::readyRead, this, [this, socket] { handleReadyRead(socket); });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+    }
+
+    bool start()
+    {
+        return listen(QHostAddress::LocalHost, 0);
+    }
+
+    Response response;
+    bool holdResponse = false;
+    QByteArray lastRequest;
+
+private:
+    void handleReadyRead(QTcpSocket* socket)
+    {
+        QByteArray& buffer = buffers_[socket];
+        buffer.append(socket->readAll());
+        if (!buffer.contains("\r\n\r\n") || holdResponse) {
+            return;
+        }
+
+        lastRequest = buffer;
+        const QByteArray statusText = response.status == 200 ? "OK" : "Error";
+        QByteArray headers = QByteArrayLiteral("HTTP/1.1 ") + QByteArray::number(response.status)
+            + ' ' + statusText + "\r\nContent-Type: " + response.contentType;
+        if (response.includeContentLength) {
+            headers += "\r\nContent-Length: " + QByteArray::number(
+                response.advertisedContentLength.value_or(response.body.size()));
+        }
+        headers += "\r\nConnection: close\r\n\r\n";
+        socket->write(headers);
+        socket->write(response.body);
+        socket->disconnectFromHost();
+        buffers_.remove(socket);
+    }
+
+    QHash<QTcpSocket*, QByteArray> buffers_;
+};
+
+QByteArray healthPayload()
+{
+    return QByteArrayLiteral(R"({
+        "api_version":"v1",
+        "device_id":"rv1126b_001",
+        "device_model":"RV1126B",
+        "release_version":"test",
+        "server_time":{"epoch_ms":1784002847389,"source_epoch_ms":1784002847389,"offset_applied_ms":0,"quality":"native_utc"},
+        "pipeline_health_available":true,
+        "pipeline":{},
+        "application_api":{"alive":true,"http_port":18080,"discovery_port":18081,"auth_required":true}
+    })");
+}
+
+DeviceProfile profileFor(const TestHttpServer& server)
+{
+    DeviceProfile profile;
+    profile.deviceId = QStringLiteral("rv1126b_001");
+    profile.credentialRef = QStringLiteral("test/rv1126b_001");
+    profile.endpoint.apiBaseUrl = QUrl(QStringLiteral("http://127.0.0.1:%1/api/v1").arg(server.serverPort()));
+    return profile;
+}
+
+} // namespace
+
+class BoardApiClientTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void healthRequestUsesBearerAndDecodesResponse();
+    void errorResponseUsesStableBoardError();
+    void errorResponsesUseStableCategories_data();
+    void errorResponsesUseStableCategories();
+    void evidenceWritesPartFile();
+    void evidenceRejectsMismatchedContentLength();
+    void unsafeEvidenceUrlIsRejectedBeforeNetworkRequest();
+    void cancellationCompletesExactlyOnce();
+    void destroyedContextSuppressesCompletion();
+};
+
+void BoardApiClientTest::healthRequestUsesBearerAndDecodesResponse()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.body = healthPayload();
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    std::optional<ApiResult<HealthDto>> result;
+
+    client.getHealth(this, [&result](ApiResult<HealthDto> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(result->isSuccess());
+    QCOMPARE(result->value().deviceId, QStringLiteral("rv1126b_001"));
+    QVERIFY(server.lastRequest.startsWith("GET /api/v1/health HTTP/1.1\r\n"));
+    QVERIFY(server.lastRequest.toLower().contains("authorization: bearer test-token\r\n"));
+}
+
+void BoardApiClientTest::errorResponseUsesStableBoardError()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.status = 401;
+    server.response.body = QByteArrayLiteral(R"({"error":{"code":"invalid_token","message":"token text must not be surfaced"}})");
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    std::optional<ApiResult<HealthDto>> result;
+
+    client.getHealth(this, [&result](ApiResult<HealthDto> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(!result->isSuccess());
+    QCOMPARE(result->error().code, QStringLiteral("invalid_token"));
+    QCOMPARE(result->error().category, ApiErrorCategory::Authentication);
+}
+
+void BoardApiClientTest::errorResponsesUseStableCategories_data()
+{
+    QTest::addColumn<int>("status");
+    QTest::addColumn<QString>("code");
+    QTest::addColumn<ApiErrorCategory>("category");
+    QTest::addColumn<bool>("retryable");
+
+    QTest::newRow("capability-disabled") << 403 << QStringLiteral("ftp_config_write_disabled")
+                                           << ApiErrorCategory::CapabilityDisabled << false;
+    QTest::newRow("not-found") << 404 << QStringLiteral("event_not_found")
+                                 << ApiErrorCategory::NotFound << false;
+    QTest::newRow("revision-conflict") << 409 << QStringLiteral("config_revision_conflict")
+                                        << ApiErrorCategory::Conflict << false;
+    QTest::newRow("temporary-server-failure") << 500 << QStringLiteral("ftp_task_read_failed")
+                                               << ApiErrorCategory::Temporary << true;
+}
+
+void BoardApiClientTest::errorResponsesUseStableCategories()
+{
+    QFETCH(int, status);
+    QFETCH(QString, code);
+    QFETCH(ApiErrorCategory, category);
+    QFETCH(bool, retryable);
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.status = status;
+    server.response.body = QStringLiteral(R"({"error":{"code":"%1","message":"server detail"}})").arg(code).toUtf8();
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    std::optional<ApiResult<HealthDto>> result;
+
+    client.getHealth(this, [&result](ApiResult<HealthDto> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(!result->isSuccess());
+    QCOMPARE(result->error().code, code);
+    QCOMPARE(result->error().category, category);
+    QCOMPARE(result->error().retryable, retryable);
+}
+
+void BoardApiClientTest::evidenceWritesPartFile()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.contentType = QByteArrayLiteral("image/jpeg");
+    server.response.body = QByteArray::fromHex("ffd8ffd9");
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString partPath = temporaryDirectory.filePath(QStringLiteral("evidence.part"));
+    std::optional<ApiResult<EvidenceDownloadResult>> result;
+    EventIdentity identity { QStringLiteral("rv1126b_001"), 1, 1 };
+
+    client.downloadEvidenceToPartFile(
+        identity,
+        QStringLiteral("/api/v1/events/1/1/images/evidence"),
+        partPath,
+        this,
+        [&result](ApiResult<EvidenceDownloadResult> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(result->isSuccess());
+    QCOMPARE(result->value().partFilePath, partPath);
+    QCOMPARE(result->value().receivedBytes, 4);
+    QFile file(partPath);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray::fromHex("ffd8ffd9"));
+}
+
+void BoardApiClientTest::evidenceRejectsMismatchedContentLength()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.contentType = QByteArrayLiteral("image/jpeg");
+    server.response.body = QByteArray::fromHex("ffd8ffd9");
+    server.response.includeContentLength = false;
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    std::optional<ApiResult<EvidenceDownloadResult>> result;
+    const EventIdentity identity { QStringLiteral("rv1126b_001"), 1, 1 };
+
+    client.downloadEvidenceToPartFile(
+        identity,
+        QStringLiteral("/api/v1/events/1/1/images/evidence"),
+        temporaryDirectory.filePath(QStringLiteral("invalid.part")),
+        this,
+        [&result](ApiResult<EvidenceDownloadResult> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(!result->isSuccess());
+    QCOMPARE(result->error().code, QStringLiteral("invalid_content_length"));
+    QCOMPARE(result->error().category, ApiErrorCategory::Protocol);
+}
+
+void BoardApiClientTest::unsafeEvidenceUrlIsRejectedBeforeNetworkRequest()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    std::optional<ApiResult<EvidenceDownloadResult>> result;
+    EventIdentity identity { QStringLiteral("rv1126b_001"), 1, 1 };
+
+    client.downloadEvidenceToPartFile(
+        identity,
+        QStringLiteral("http://untrusted.example/api/v1/evidence"),
+        QDir::temp().filePath(QStringLiteral("unsafe.part")),
+        this,
+        [&result](ApiResult<EvidenceDownloadResult> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 500);
+    QVERIFY(!result->isSuccess());
+    QCOMPARE(result->error().category, ApiErrorCategory::Validation);
+    QVERIFY(server.lastRequest.isEmpty());
+}
+
+void BoardApiClientTest::cancellationCompletesExactlyOnce()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.holdResponse = true;
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    int completionCount = 0;
+    std::optional<ApiResult<HealthDto>> result;
+
+    const RequestId requestId = client.getHealth(this, [&completionCount, &result](ApiResult<HealthDto> value) {
+        ++completionCount;
+        result = std::move(value);
+    });
+    client.cancel(requestId);
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 500);
+    QVERIFY(!result->isSuccess());
+    QCOMPARE(result->error().category, ApiErrorCategory::Cancelled);
+    QTest::qWait(50);
+    QCOMPARE(completionCount, 1);
+}
+
+void BoardApiClientTest::destroyedContextSuppressesCompletion()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.holdResponse = true;
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    auto* context = new QObject;
+    int completionCount = 0;
+
+    client.getHealth(context, [&completionCount](ApiResult<HealthDto>) { ++completionCount; });
+    delete context;
+    QTest::qWait(100);
+
+    QCOMPARE(completionCount, 0);
+}
+
+QTEST_MAIN(BoardApiClientTest)
+
+#include "BoardApiClientTest.moc"

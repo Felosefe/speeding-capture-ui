@@ -60,17 +60,27 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/ports/IEventRepository.h
     src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/network/BoardApiClient.cpp
+    src/rv1126b/network/BoardApiClient.h
+    src/rv1126b/network/UdpDeviceDiscoveryService.cpp
+    src/rv1126b/network/UdpDeviceDiscoveryService.h
     src/rv1126b/protocol/ApiCodec.h
     src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/protocol/BoardApiCodec.h
     src/rv1126b/services/DeviceDiscoveryService.h
     src/rv1126b/services/DeviceFleetService.h
     src/rv1126b/services/DeviceSession.h
     src/rv1126b/services/BoardEventSyncService.cpp
     src/rv1126b/services/BoardEventSyncService.h
+    src/rv1126b/services/BoardDeviceSession.cpp
+    src/rv1126b/services/BoardDeviceSession.h
     src/rv1126b/services/BoardEvidenceCache.cpp
     src/rv1126b/services/BoardEvidenceCache.h
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
     src/rv1126b/services/BoardFtpTaskSnapshotService.h
+    src/rv1126b/services/BoardFtpService.cpp
+    src/rv1126b/services/BoardFtpService.h
     src/rv1126b/services/EventSyncService.h
     src/rv1126b/services/EvidenceCache.h
     src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
@@ -78,6 +88,8 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/services/FtpService.h
     src/rv1126b/services/LocalEvidenceService.cpp
     src/rv1126b/services/LocalEvidenceService.h
+    src/rv1126b/security/WindowsCredentialStore.cpp
+    src/rv1126b/security/WindowsCredentialStore.h
     src/rv1126b/storage/SqliteEventRepository.cpp
     src/rv1126b/storage/SqliteEventRepository.h
     src/services/DeviceManager.cpp
@@ -293,6 +305,28 @@ target_compile_options(DeviceIntegrationControllerTest
         $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
 )
 
+qt_add_executable(ApiCodecTest
+    tests/ApiCodecTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/protocol/ApiCodec.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/protocol/BoardApiCodec.h
+)
+
+target_link_libraries(ApiCodecTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Test
+)
+
+target_compile_options(ApiCodecTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
 add_test(NAME DeviceIntegrationControllerTest COMMAND DeviceIntegrationControllerTest)
 set_tests_properties(DeviceIntegrationControllerTest PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
@@ -333,6 +367,42 @@ add_test(NAME DeviceIntegrationUiTest COMMAND DeviceIntegrationUiTest)
 set_tests_properties(DeviceIntegrationUiTest PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
+
+target_compile_definitions(ApiCodecTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME ApiCodecTest COMMAND ApiCodecTest)
+
+qt_add_executable(BoardApiClientTest
+    tests/BoardApiClientTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/network/BoardApiClient.cpp
+    src/rv1126b/network/BoardApiClient.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/protocol/ApiCodec.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/protocol/BoardApiCodec.h
+)
+
+target_link_libraries(BoardApiClientTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Test
+)
+
+target_compile_options(BoardApiClientTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME BoardApiClientTest COMMAND BoardApiClientTest)
 
 qt_add_executable(EventViewControllerTest
     tests/EventViewControllerTest.cpp
@@ -435,6 +505,25 @@ set_tests_properties(RtspPlayerTest PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_MEDIA_BACKEND=ffmpeg"
 )
 
+qt_add_executable(WindowsCredentialStoreTest
+    tests/WindowsCredentialStoreTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/security/WindowsCredentialStore.cpp
+    src/rv1126b/security/WindowsCredentialStore.h
+)
+
+target_link_libraries(WindowsCredentialStoreTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Test
+)
+
+target_compile_options(WindowsCredentialStoreTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
 if(BUILD_RTSP_SPIKE)
     qt_add_executable(Rv1126bRtspSpike
         tools/rtsp_spike/main.cpp
@@ -461,6 +550,91 @@ if(BUILD_RTSP_SPIKE)
             $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
     )
 endif()
+
+if(WIN32)
+    target_link_libraries(WindowsCredentialStoreTest PRIVATE Advapi32)
+endif()
+
+add_test(NAME WindowsCredentialStoreTest COMMAND WindowsCredentialStoreTest)
+
+qt_add_executable(SecurityBoundaryTest
+    tests/SecurityBoundaryTest.cpp
+)
+
+target_link_libraries(SecurityBoundaryTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Test
+)
+
+target_compile_options(SecurityBoundaryTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(SecurityBoundaryTest
+    PRIVATE
+        CAMERA_MANAGER_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME SecurityBoundaryTest COMMAND SecurityBoundaryTest)
+
+qt_add_executable(DiscoveryAndSessionTest
+    tests/DiscoveryAndSessionTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/network/UdpDeviceDiscoveryService.cpp
+    src/rv1126b/network/UdpDeviceDiscoveryService.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/protocol/ApiCodec.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/protocol/BoardApiCodec.h
+    src/rv1126b/services/BoardDeviceSession.cpp
+    src/rv1126b/services/BoardDeviceSession.h
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceSession.h
+)
+
+target_link_libraries(DiscoveryAndSessionTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Test
+)
+
+target_compile_options(DiscoveryAndSessionTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME DiscoveryAndSessionTest COMMAND DiscoveryAndSessionTest)
+
+qt_add_executable(BoardFtpServiceTest
+    tests/BoardFtpServiceTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/BoardFtpService.cpp
+    src/rv1126b/services/BoardFtpService.h
+    src/rv1126b/services/FtpService.h
+)
+
+target_link_libraries(BoardFtpServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Test
+)
+
+target_compile_options(BoardFtpServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME BoardFtpServiceTest COMMAND BoardFtpServiceTest)
 
 qt_add_executable(SqliteEventRepositoryTest
     tests/SqliteEventRepositoryTest.cpp
@@ -662,6 +836,7 @@ target_compile_definitions(CameraManagerApp
 )
 
 if(WIN32)
+    target_link_libraries(CameraManagerApp PRIVATE Advapi32)
     set_target_properties(CameraManagerApp PROPERTIES
         WIN32_EXECUTABLE TRUE
     )

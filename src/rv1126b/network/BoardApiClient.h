@@ -1,0 +1,141 @@
+#pragma once
+
+#include "../domain/Models.h"
+#include "../ports/IBoardApiClient.h"
+#include "../ports/ISecretStore.h"
+#include "../protocol/ApiCodec.h"
+
+#include <QHash>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QPointer>
+#include <QTimer>
+
+#include <utility>
+
+namespace rv1126b {
+
+class BoardApiClient final : public IBoardApiClient
+{
+    Q_OBJECT
+
+public:
+    static constexpr int JsonConnectTimeoutMs = 3000;
+    static constexpr int JsonRequestTimeoutMs = 10000;
+    static constexpr int EvidenceRequestTimeoutMs = 30000;
+
+    BoardApiClient(
+        DeviceProfile profile,
+        ISecretStore* secretStore,
+        const IApiCodec* codec,
+        QObject* parent = nullptr);
+
+    DeviceProfile profile() const;
+    void setProfile(DeviceProfile profile);
+
+    RequestId getHealth(QObject* context, ApiCompletion<HealthDto> completion) override;
+    RequestId listEvents(int limit, const std::optional<QString>& cursor, QObject* context, ApiCompletion<EventPageDto> completion) override;
+    RequestId getEventDetail(const EventIdentity& identity, QObject* context, ApiCompletion<EventDetailDto> completion) override;
+    RequestId downloadEvidenceToPartFile(
+        const EventIdentity& identity,
+        const QString& evidenceRelativeUrl,
+        const QString& partFilePath,
+        QObject* context,
+        ApiCompletion<EvidenceDownloadResult> completion) override;
+    RequestId getEvidenceConfig(QObject* context, ApiCompletion<EvidenceConfigDto> completion) override;
+    RequestId putEvidenceConfig(const EvidenceConfigUpdate& update, QObject* context, ApiCompletion<EvidenceConfigDto> completion) override;
+    RequestId getTime(QObject* context, ApiCompletion<TimeStatusDto> completion) override;
+    RequestId putTime(const TimeUpdate& update, QObject* context, ApiCompletion<TimeStatusDto> completion) override;
+    RequestId getFtpConfig(QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
+    RequestId putFtpConfig(const FtpConfigUpdate& update, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
+    RequestId rollbackFtpConfig(const QString& expectedRevision, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
+    RequestId getFtpControl(QObject* context, ApiCompletion<FtpControlDto> completion) override;
+    RequestId putFtpControl(const FtpControlUpdate& update, QObject* context, ApiCompletion<FtpControlDto> completion) override;
+    RequestId createFtpTask(const FtpTaskCreate& request, QObject* context, ApiCompletion<FtpTaskDetailDto> completion) override;
+    RequestId listFtpTasks(int limit, const std::optional<QString>& cursor, QObject* context, ApiCompletion<FtpTaskPageDto> completion) override;
+    RequestId getFtpTask(const QString& taskId, QObject* context, ApiCompletion<FtpTaskDetailDto> completion) override;
+    RequestId retryFtpTask(const QString& taskId, QObject* context, ApiCompletion<FtpTaskDetailDto> completion) override;
+
+    void cancel(const RequestId& requestId) override;
+    void cancelAll() override;
+
+private:
+    struct PendingRequest {
+        QPointer<QNetworkReply> reply;
+        QPointer<QTimer> connectTimer;
+        std::function<void(const ApiError&)> fail;
+        std::function<void(const QByteArray&)> succeedJson;
+        std::function<void(const EvidenceDownloadResult&)> succeedEvidence;
+    };
+
+    RequestId startJsonRequest(
+        QNetworkAccessManager::Operation operation,
+        const QUrl& url,
+        const QByteArray& body,
+        QObject* context,
+        ApiCompletion<QByteArray> completion);
+    RequestId startEvidenceRequest(
+        const QUrl& url,
+        const QString& partFilePath,
+        QObject* context,
+        ApiCompletion<EvidenceDownloadResult> completion);
+    QUrl endpointUrl(const QString& relativePath, ApiError* error) const;
+    QUrl eventUrl(const EventIdentity& identity, const QString& suffix, ApiError* error) const;
+    bool applyAuthorization(QNetworkRequest* request, ApiError* error) const;
+    QNetworkReply* issueRequest(QNetworkAccessManager::Operation operation, const QNetworkRequest& request, const QByteArray& body);
+    void completeJsonRequest(const RequestId& requestId);
+    void completeEvidenceRequest(const RequestId& requestId, const QString& partFilePath);
+    void stopConnectTimer(const RequestId& requestId);
+    void failPending(const RequestId& requestId, const ApiError& error, bool abortReply);
+    ApiError localError(const QString& code, const QString& message, ApiErrorCategory category, bool retryable = false) const;
+    ApiError networkError(QNetworkReply* reply) const;
+
+    template<typename T>
+    static void queueCompletion(QObject* context, ApiCompletion<T> completion, ApiResult<T> result)
+    {
+        if (!context) {
+            return;
+        }
+        QPointer<QObject> guardedContext(context);
+        QMetaObject::invokeMethod(context, [guardedContext, completion = std::move(completion), result = std::move(result)]() mutable {
+            if (guardedContext) {
+                completion(std::move(result));
+            }
+        }, Qt::QueuedConnection);
+    }
+
+    template<typename T, typename Parser>
+    RequestId startDecodedJson(
+        QNetworkAccessManager::Operation operation,
+        const QUrl& url,
+        const QByteArray& body,
+        QObject* context,
+        ApiCompletion<T> completion,
+        Parser parser)
+    {
+        return startJsonRequest(operation, url, body, context,
+            [completion = std::move(completion), parser = std::move(parser)](ApiResult<QByteArray> result) mutable {
+                if (!result.isSuccess()) {
+                    completion(ApiResult<T>::failure(result.error()));
+                    return;
+                }
+                completion(parser(result.value()));
+            });
+    }
+
+    template<typename T>
+    RequestId returnTypedError(QObject* context, ApiCompletion<T> completion, const ApiError& error)
+    {
+        const RequestId requestId = RequestId::createUuid();
+        queueCompletion(context, std::move(completion), ApiResult<T>::failure(error));
+        return requestId;
+    }
+
+    DeviceProfile profile_;
+    ISecretStore* secretStore_ = nullptr;
+    const IApiCodec* codec_ = nullptr;
+    QNetworkAccessManager networkAccessManager_;
+    QHash<RequestId, PendingRequest> pendingRequests_;
+};
+
+} // namespace rv1126b
