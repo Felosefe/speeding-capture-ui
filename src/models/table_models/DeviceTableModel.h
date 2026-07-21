@@ -35,6 +35,8 @@ public:
     void updateConfig(int row, const DeviceConfig& config);
     void incrementCaptureCount(int row);
     void seedDemoDevices();
+    void setRealMode(bool realMode);
+    bool removeDevice(const QString& deviceId);
 
     const Device* deviceAt(int row) const;
     Device* deviceAt(int row);
@@ -44,4 +46,5 @@ public:
 
 private:
     QVector<Device> devices_;
+    bool realMode_ = false;
 };

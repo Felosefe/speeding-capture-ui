@@ -4,12 +4,14 @@
 #include <QDir>
 #include <QString>
 #include <QStringList>
+#include <QStandardPaths>
 #include <QTime>
 
 struct UiSettings {
     bool startMaximized = false;
     bool autoListenDeviceData = true;
     bool autoConnectOnStart = false;
+    QString lastSelectedVideoDeviceId;
     QString fontFamily = QStringLiteral("Microsoft YaHei");
     int fontPointSize = 10;
     int captureListMaxRows = 1000;
@@ -34,7 +36,8 @@ struct UiSettings {
 };
 
 struct StorageSettings {
-    QString rootPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("captures"));
+    QString rootPath = QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                           .filePath(QStringLiteral("captures"));
     QString normalImageTemplate = QStringLiteral("{yyyyMMdd}/{deviceId}_{plate}_{type}_{index}.jpg");
     QString overspeedImageTemplate = QStringLiteral("{yyyyMMdd}/overspeed/{deviceId}_{plate}_{index}.jpg");
     QString watchedVehicleImageTemplate = QStringLiteral("{yyyyMMdd}/watched/{deviceId}_{plate}_{index}.jpg");

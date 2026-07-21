@@ -6,8 +6,11 @@
 #include "../ports/IEventRepository.h"
 
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QVector>
+
+#include <functional>
 
 namespace rv1126b {
 
@@ -16,12 +19,19 @@ class BoardEvidenceCache final : public EvidenceCache
     Q_OBJECT
 
 public:
+    using ApiClientResolver = std::function<IBoardApiClient*(const QString& deviceId)>;
+
     BoardEvidenceCache(
         IBoardApiClient* apiClient,
         IEventRepository* repository,
         QObject* parent = nullptr);
     BoardEvidenceCache(
         IBoardApiClient* apiClient,
+        IEventRepository* repository,
+        QString cacheRootPath,
+        QObject* parent = nullptr);
+    BoardEvidenceCache(
+        ApiClientResolver apiClientResolver,
         IEventRepository* repository,
         QString cacheRootPath,
         QObject* parent = nullptr);
@@ -35,6 +45,7 @@ public:
     void cancelDevice(const QString& deviceId) override;
     void cancelAll() override;
     QString finalPathFor(const VehicleEvent& event) const override;
+    bool setCacheRootPath(const QString& cacheRootPath);
 
 private:
     struct ActiveDownload {
@@ -42,6 +53,7 @@ private:
         EvidenceCacheEntry entry;
         QString partFilePath;
         RequestId requestId;
+        QPointer<IBoardApiClient> apiClient;
     };
 
     void drainQueue();
@@ -68,7 +80,7 @@ private:
     ApiError makeCacheError(const QString& code, const QString& message, bool retryable = false) const;
     EvidenceCacheStatus statusForError(const ApiError& error) const;
 
-    IBoardApiClient* apiClient_ = nullptr;
+    ApiClientResolver apiClientResolver_;
     IEventRepository* repository_ = nullptr;
     QString cacheRootPath_;
     QVector<VehicleEvent> queue_;

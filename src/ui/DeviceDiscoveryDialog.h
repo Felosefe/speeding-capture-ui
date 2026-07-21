@@ -9,6 +9,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QTableWidget;
+class QSpinBox;
 
 class DeviceDiscoveryDialog final : public QDialog
 {
@@ -23,9 +24,12 @@ public:
 private slots:
     void startScan();
     void connectSelectedDevice();
+    void connectManualEndpoint();
+    void forgetSelectedDevice();
     void updateSelection();
     void resetDevices();
     void upsertDevice(const rv1126b::DiscoveredDeviceDto& device);
+    void upsertKnownDevice(const rv1126b::DeviceSessionSnapshot& snapshot);
     void updateScanState(bool scanning);
     void updateSession(const rv1126b::DeviceSessionSnapshot& snapshot);
     void showControllerError(const QString& code, const QString& message);
@@ -42,6 +46,9 @@ private:
     QLabel* messageLabel_ = nullptr;
     QPushButton* searchButton_ = nullptr;
     QPushButton* connectButton_ = nullptr;
+    QPushButton* forgetButton_ = nullptr;
+    QLineEdit* manualIpEdit_ = nullptr;
+    QSpinBox* manualPortSpin_ = nullptr;
     QString initialDeviceId_;
     QHash<QString, rv1126b::DeviceSessionState> sessionStates_;
 };

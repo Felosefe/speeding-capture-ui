@@ -11,14 +11,20 @@
 #include <QVector>
 
 #include <optional>
+#include <functional>
 
 namespace rv1126b {
+
+class DirectDeviceProbeService;
+using ForgetDeviceHandler = std::function<void(const QString&, QObject*, ApiCompletion<void>)>;
 
 struct DeviceIntegrationDependencies {
     DeviceDiscoveryService* discovery = nullptr;
     DeviceFleetService* fleet = nullptr;
     ISecretStore* secretStore = nullptr;
     IRtspPlayer* player = nullptr;
+    DirectDeviceProbeService* directProbe = nullptr;
+    ForgetDeviceHandler forgetDevice;
 };
 
 class DeviceIntegrationController final : public QObject
@@ -36,15 +42,21 @@ public:
     QVector<DeviceSessionSnapshot> sessionSnapshots() const;
     std::optional<DiscoveredDeviceDto> discoveredDevice(const QString& deviceId) const;
     bool hasCredentialForDevice(const QString& deviceId) const;
+    bool manualProbeAvailable() const;
     RtspStreamRole streamRole() const;
     QString selectedVideoDeviceId() const;
 
     RequestId startScan(int scanWindowMs = DeviceDiscoveryService::DefaultScanWindowMs);
     void cancelScan();
     bool connectDiscoveredDevice(const QString& deviceId, SecretValue token);
+    bool connectKnownDevice(const QString& deviceId, SecretValue replacementToken = {});
+    bool connectManualEndpoint(const QString& ipv4, quint16 port, SecretValue token,
+                               const QString& expectedDeviceId = {});
+    void forgetKnownDevice(const QString& deviceId);
     bool selectVideoDevice(const QString& deviceId);
     void disconnectDevice(const QString& deviceId);
     void setStreamRole(RtspStreamRole role);
+    void setPlaybackSuspended(bool suspended);
     void shutdown();
 
 signals:
@@ -53,6 +65,7 @@ signals:
     void scanStateChanged(bool scanning);
     void sessionChanged(const rv1126b::DeviceSessionSnapshot& snapshot);
     void selectedVideoDeviceChanged(const QString& deviceId);
+    void deviceForgotten(const QString& deviceId);
     void playbackStateChanged(rv1126b::RtspPlayerState state);
     void playbackError(const rv1126b::ApiError& error);
     void userError(const QString& code, const QString& message);
@@ -78,11 +91,13 @@ private:
     QHash<QString, DiscoveredDeviceDto> discoveredById_;
     QHash<QString, DeviceSessionSnapshot> sessionsById_;
     RequestId activeScanId_;
+    RequestId activeProbeId_;
     QString selectedVideoDeviceId_;
     QString playbackDeviceId_;
     RtspStreamRole streamRole_ = RtspStreamRole::Sub;
     bool scanning_ = false;
     bool shutdown_ = false;
+    bool playbackSuspended_ = false;
 };
 
 } // namespace rv1126b

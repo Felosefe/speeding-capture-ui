@@ -28,6 +28,10 @@ public:
     virtual RequestId loadDeviceProfiles(
         QObject* context,
         ApiCompletion<QVector<DeviceProfile>> completion) = 0;
+    virtual RequestId deleteDeviceProfile(
+        const QString& deviceId,
+        QObject* context,
+        ApiCompletion<void> completion) = 0;
     virtual RequestId upsertEvents(
         const QVector<VehicleEvent>& events,
         QObject* context,

@@ -11,6 +11,8 @@
 
 #include <QMainWindow>
 
+#include <functional>
+
 class QAction;
 class QCheckBox;
 class QCloseEvent;
@@ -40,17 +42,25 @@ class QSplitter;
 class SystemSettingsService;
 class VideoWidget;
 class LivePreviewPanel;
+namespace rv1126b { class EvidenceCacheMaintenanceService; }
 
 struct MainWindowDependencies {
     rv1126b::DeviceDiscoveryService* discovery = nullptr;
     rv1126b::DeviceFleetService* fleet = nullptr;
     rv1126b::ISecretStore* secretStore = nullptr;
     rv1126b::IRtspPlayer* player = nullptr;
+    rv1126b::DirectDeviceProbeService* directProbe = nullptr;
+    rv1126b::ForgetDeviceHandler forgetDevice;
     rv1126b::IEventRepository* eventRepository = nullptr;
     rv1126b::EvidenceCache* evidenceCache = nullptr;
     QVector<rv1126b::EventSyncService*> eventSyncServices;
+    std::function<rv1126b::EventSyncService*(const QString&)> eventSyncForDevice;
     rv1126b::BoardApiResolver boardApiForDevice;
     rv1126b::FtpServiceResolver ftpServiceForDevice;
+    rv1126b::FtpTaskSnapshotResolver ftpTaskSnapshotForDevice;
+    rv1126b::EvidenceCacheMaintenanceService* evidenceMaintenance = nullptr;
+    QString evidenceRootPath;
+    std::function<bool(const QString&)> switchEvidenceRoot;
     bool mockMode = false;
 };
 
@@ -83,6 +93,8 @@ private slots:
     void deleteSelectedCapture();
     void clearCaptureRecords();
     void showActionMessage();
+    void showSelectedNetworkInfo();
+    void openSelectedLocalFolder();
     void updateDeviceProperties();
     void showDeviceContextMenu(const QPoint& position);
     void handleDeviceAdded(const Device& device);
@@ -94,6 +106,7 @@ private slots:
     void handleSessionChanged(const rv1126b::DeviceSessionSnapshot& snapshot);
     void handleSelectedVideoDeviceChanged(const QString& deviceId);
     void handleIntegrationError(const QString& code, const QString& message);
+    void handleDeviceForgotten(const QString& deviceId);
     void updateSelectedEvidence();
     void changeEventViewMode();
     void previousHistoryPage();
@@ -178,6 +191,7 @@ private:
     VideoWidget* snapshotPreview_ = nullptr;
     QSplitter* previewSplitter_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QLabel* persistentStatusLabel_ = nullptr;
     QTimer* capturePauseTimer_ = nullptr;
     QMenu* deviceContextMenu_ = nullptr;
 
@@ -189,6 +203,11 @@ private:
     rv1126b::DeviceOperationsController* operationsController_ = nullptr;
     rv1126b::EventViewController* eventController_ = nullptr;
     rv1126b::IRtspPlayer* rtspPlayer_ = nullptr;
+    std::function<rv1126b::EventSyncService*(const QString&)> eventSyncForDevice_;
+    rv1126b::BoardApiResolver boardApiForDevice_;
+    rv1126b::EvidenceCacheMaintenanceService* evidenceMaintenance_ = nullptr;
+    QString evidenceRootPath_;
+    std::function<bool(const QString&)> switchEvidenceRoot_;
     DeviceTableModel* deviceModel_ = nullptr;
     DevicePropertyModel* propertyModel_ = nullptr;
     CaptureRecordTableModel* captureModel_ = nullptr;

@@ -13,12 +13,16 @@
 
 namespace rv1126b {
 
+class BoardFtpTaskSnapshotService;
+
 using BoardApiResolver = std::function<IBoardApiClient*(const QString& deviceId)>;
 using FtpServiceResolver = std::function<FtpService*(const QString& deviceId)>;
+using FtpTaskSnapshotResolver = std::function<BoardFtpTaskSnapshotService*(const QString& deviceId)>;
 
 struct DeviceOperationsDependencies {
     BoardApiResolver boardApiForDevice;
     FtpServiceResolver ftpServiceForDevice;
+    FtpTaskSnapshotResolver ftpTaskSnapshotForDevice;
 };
 
 class DeviceOperationsController final : public QObject
@@ -36,6 +40,7 @@ public:
     QString deviceId() const;
     bool boardApiAvailable() const;
     bool ftpServiceAvailable() const;
+    bool ftpTaskSnapshotAvailable() const;
     bool isBusy(const QString& operation) const;
 
     void selectDevice(const QString& deviceId);
@@ -53,6 +58,7 @@ public:
     void loadFtpTask(const QString& taskId);
     void createFtpTask(const FtpTaskCreate& request);
     void retryFtpTask(const QString& taskId);
+    void loadLocalFtpTaskSnapshots();
     void cancelPending();
     void shutdown();
 
@@ -75,6 +81,7 @@ signals:
     void ftpTaskLoaded(const rv1126b::FtpTaskDetailDto& task);
     void ftpTaskCreated(const rv1126b::FtpTaskDetailDto& task);
     void ftpTaskRetried(const rv1126b::FtpTaskDetailDto& task);
+    void localFtpTaskSnapshotsLoaded(const QVector<rv1126b::StoredFtpTask>& tasks);
     void userError(const QString& code, const QString& message);
 
 private:
@@ -96,6 +103,7 @@ private:
     QString deviceId_;
     IBoardApiClient* boardApi_ = nullptr;
     FtpService* ftpService_ = nullptr;
+    BoardFtpTaskSnapshotService* ftpTaskSnapshot_ = nullptr;
     QHash<QString, int> generations_;
     QHash<QString, RequestId> boardRequests_;
     QSet<QString> busyOperations_;

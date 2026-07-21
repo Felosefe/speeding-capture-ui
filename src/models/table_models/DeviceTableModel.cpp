@@ -37,11 +37,15 @@ QVariant DeviceTableModel::data(const QModelIndex& index, int role) const
         case StatusColumn:
             return connectionStateText(device.status.connectionState);
         case DirectionColumn:
-            return device.config.direction;
+            return realMode_ ? (device.status.lastHeartbeat.isValid()
+                                    ? device.status.lastHeartbeat.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+                                    : QStringLiteral("—"))
+                             : device.config.direction;
         case SpeedLimitColumn:
-            return QStringLiteral("%1 km/h").arg(device.config.speedLimitKmh);
+            return realMode_ ? device.status.firmwareVersion
+                             : QStringLiteral("%1 km/h").arg(device.config.speedLimitKmh);
         case CaptureCountColumn:
-            return device.status.captureCount;
+            return realMode_ ? device.id : QVariant(device.status.captureCount);
         default:
             return {};
         }
@@ -76,7 +80,7 @@ QVariant DeviceTableModel::headerData(int section, Qt::Orientation orientation, 
 
     switch (section) {
     case NameColumn:
-        return QStringLiteral("名称");
+        return realMode_ ? QStringLiteral("型号 / 设备") : QStringLiteral("名称");
     case IpColumn:
         return QStringLiteral("IP");
     case PortColumn:
@@ -84,11 +88,11 @@ QVariant DeviceTableModel::headerData(int section, Qt::Orientation orientation, 
     case StatusColumn:
         return QStringLiteral("状态");
     case DirectionColumn:
-        return QStringLiteral("方向");
+        return realMode_ ? QStringLiteral("最后心跳") : QStringLiteral("方向");
     case SpeedLimitColumn:
-        return QStringLiteral("限速");
+        return realMode_ ? QStringLiteral("固件版本") : QStringLiteral("限速");
     case CaptureCountColumn:
-        return QStringLiteral("抓拍");
+        return realMode_ ? QStringLiteral("设备 ID") : QStringLiteral("抓拍");
     default:
         return {};
     }
@@ -180,6 +184,24 @@ void DeviceTableModel::seedDemoDevices()
         device.config.speedLimitKmh = i == 2 ? 80 : 60;
         addDevice(device);
     }
+}
+
+void DeviceTableModel::setRealMode(bool realMode)
+{
+    if (realMode_ == realMode) return;
+    realMode_ = realMode;
+    emit headerDataChanged(Qt::Horizontal, 0, ColumnCount - 1);
+    if (!devices_.isEmpty()) emit dataChanged(index(0, 0), index(devices_.size() - 1, ColumnCount - 1));
+}
+
+bool DeviceTableModel::removeDevice(const QString& deviceId)
+{
+    const int row = rowForDeviceId(deviceId);
+    if (row < 0) return false;
+    beginRemoveRows(QModelIndex(), row, row);
+    devices_.removeAt(row);
+    endRemoveRows();
+    return true;
 }
 
 const Device* DeviceTableModel::deviceAt(int row) const

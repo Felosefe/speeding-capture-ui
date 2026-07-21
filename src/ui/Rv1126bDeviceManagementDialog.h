@@ -3,6 +3,7 @@
 #include "../rv1126b/application/DeviceOperationsController.h"
 
 #include <QDialog>
+#include <QVector>
 
 #include <optional>
 
@@ -29,7 +30,8 @@ public:
         const QString& deviceId,
         rv1126b::DeviceOperationsController* controller,
         InitialPage initialPage = InitialPage::Evidence,
-        QWidget* parent = nullptr);
+        QWidget* parent = nullptr,
+        bool deviceOnline = true);
     ~Rv1126bDeviceManagementDialog() override;
 
 protected:
@@ -47,10 +49,13 @@ private:
     void applyFtpConfig(const rv1126b::FtpConfigSnapshotDto& config);
     void addFtpTargetRow(const std::optional<rv1126b::FtpTargetSnapshotDto>& target = std::nullopt);
     rv1126b::FtpConfigUpdate collectFtpConfig() const;
+    bool validateFtpRowsInline();
     void clearPasswordEditors();
     void applyFtpControl(const rv1126b::FtpControlDto& control);
     void applyTaskPage(const rv1126b::FtpTaskPageDto& page, const QString& requestedCursor);
     void applyTaskDetail(const rv1126b::FtpTaskDetailDto& detail);
+    void applyLocalTaskSnapshots(const QVector<rv1126b::StoredFtpTask>& tasks);
+    void applyLocalTaskDetail(const rv1126b::StoredFtpTask& task);
     void createTask();
     void refreshTasks();
     void updateTaskRefreshState();
@@ -92,6 +97,7 @@ private:
     QCheckBox* autoEnabledCheck_ = nullptr;
     QComboBox* autoScopeCombo_ = nullptr;
     QLabel* ftpStatus_ = nullptr;
+    QPushButton* saveFtpButton_ = nullptr;
     QString ftpRevision_;
 
     QDateTimeEdit* taskStartEdit_ = nullptr;
@@ -102,6 +108,7 @@ private:
     QPushButton* previousTasksButton_ = nullptr;
     QPushButton* nextTasksButton_ = nullptr;
     QPushButton* retryTaskButton_ = nullptr;
+    QPushButton* createTaskButton_ = nullptr;
     QLabel* taskPageLabel_ = nullptr;
     QTimer* taskRefreshTimer_ = nullptr;
     QStringList taskPageCursors_ {QString()};
@@ -109,5 +116,7 @@ private:
     std::optional<QString> nextTaskCursor_;
     QString selectedTaskId_;
     rv1126b::FtpTaskState selectedTaskState_ = rv1126b::FtpTaskState::Unknown;
+    QVector<rv1126b::StoredFtpTask> localTaskSnapshots_;
+    bool deviceOnline_ = true;
 };
 

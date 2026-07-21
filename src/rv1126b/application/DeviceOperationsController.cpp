@@ -1,4 +1,5 @@
 #include "DeviceOperationsController.h"
+#include "../services/BoardFtpTaskSnapshotService.h"
 
 #include <QDateTime>
 #include <QHostAddress>
@@ -63,6 +64,7 @@ DeviceOperationsController::~DeviceOperationsController()
 QString DeviceOperationsController::deviceId() const { return deviceId_; }
 bool DeviceOperationsController::boardApiAvailable() const { return boardApi_ != nullptr; }
 bool DeviceOperationsController::ftpServiceAvailable() const { return ftpService_ != nullptr; }
+bool DeviceOperationsController::ftpTaskSnapshotAvailable() const { return ftpTaskSnapshot_ != nullptr; }
 bool DeviceOperationsController::isBusy(const QString& operation) const
 {
     return busyOperations_.contains(operation);
@@ -76,12 +78,16 @@ void DeviceOperationsController::selectDevice(const QString& deviceId)
             boardApi_ = dependencies_.boardApiForDevice(deviceId);
         if (!ftpService_ && dependencies_.ftpServiceForDevice)
             ftpService_ = dependencies_.ftpServiceForDevice(deviceId);
+        if (!ftpTaskSnapshot_ && dependencies_.ftpTaskSnapshotForDevice)
+            ftpTaskSnapshot_ = dependencies_.ftpTaskSnapshotForDevice(deviceId);
         return;
     }
     cancelPending();
     deviceId_ = deviceId;
     boardApi_ = dependencies_.boardApiForDevice ? dependencies_.boardApiForDevice(deviceId) : nullptr;
     ftpService_ = dependencies_.ftpServiceForDevice ? dependencies_.ftpServiceForDevice(deviceId) : nullptr;
+    ftpTaskSnapshot_ = dependencies_.ftpTaskSnapshotForDevice
+        ? dependencies_.ftpTaskSnapshotForDevice(deviceId) : nullptr;
     ftpConfig_.reset();
     ftpControl_.reset();
     conflictUpdate_.reset();
@@ -305,6 +311,12 @@ void DeviceOperationsController::loadFtpTask(const QString& taskId)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("读取 FTP 任务详情失败"));
+            if (ftpTaskSnapshot_) {
+                ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
+                    [this](ApiResult<StoredFtpTask> saved) {
+                        if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
+                    });
+            }
             emit ftpTaskLoaded(result.value());
         });
 }
@@ -320,6 +332,12 @@ void DeviceOperationsController::createFtpTask(const FtpTaskCreate& request)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("创建 FTP 历史任务失败"));
+            if (ftpTaskSnapshot_) {
+                ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
+                    [this](ApiResult<StoredFtpTask> saved) {
+                        if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
+                    });
+            }
             emit ftpTaskCreated(result.value());
         });
 }
@@ -337,7 +355,26 @@ void DeviceOperationsController::retryFtpTask(const QString& taskId)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("重试 FTP 历史任务失败"));
+            if (ftpTaskSnapshot_) {
+                ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
+                    [this](ApiResult<StoredFtpTask> saved) {
+                        if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
+                    });
+            }
             emit ftpTaskRetried(result.value());
+        });
+}
+
+void DeviceOperationsController::loadLocalFtpTaskSnapshots()
+{
+    if (!ftpTaskSnapshot_) return emitUnavailable(QStringLiteral("ftp_snapshot"));
+    FtpTaskQuery query;
+    query.deviceId = deviceId_;
+    query.limit = 200;
+    ftpTaskSnapshot_->loadTaskSnapshots(query, this,
+        [this](ApiResult<QVector<StoredFtpTask>> result) {
+            if (!result) return reportError(result.error(), QStringLiteral("读取 FTP 本地快照失败"));
+            emit localFtpTaskSnapshotsLoaded(result.value());
         });
 }
 
@@ -358,6 +395,7 @@ void DeviceOperationsController::shutdown()
     cancelPending();
     boardApi_ = nullptr;
     ftpService_ = nullptr;
+    ftpTaskSnapshot_ = nullptr;
 }
 
 int DeviceOperationsController::beginOperation(const QString& operation)
@@ -403,6 +441,8 @@ void DeviceOperationsController::emitUnavailable(const QString& service)
     emit userError(QStringLiteral("service_unavailable"),
                    service == QStringLiteral("ftp")
                        ? QStringLiteral("当前设备的 FTP 服务尚未装配")
+                       : service == QStringLiteral("ftp_snapshot")
+                           ? QStringLiteral("当前设备没有可用的 FTP 本地快照服务")
                        : QStringLiteral("当前设备的配置与时间服务尚未装配"));
 }
 

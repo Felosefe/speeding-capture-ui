@@ -3,11 +3,21 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QFile>
 #include <QSettings>
+#include <QStandardPaths>
 
 SystemSettingsService::SystemSettingsService(QObject* parent)
     : SystemSettingsService(defaultSettingsPath(), parent)
 {
+#ifdef CAMERA_MANAGER_SOURCE_DIR
+    const QString legacyPath = QDir(QString::fromUtf8(CAMERA_MANAGER_SOURCE_DIR))
+                                   .filePath(QStringLiteral("data/config/system.ini"));
+    if (!QFileInfo::exists(settingsPath_) && QFileInfo::exists(legacyPath)) {
+        QDir().mkpath(QFileInfo(settingsPath_).absolutePath());
+        QFile::copy(legacyPath, settingsPath_);
+    }
+#endif
 }
 
 SystemSettingsService::SystemSettingsService(const QString& settingsPath, QObject* parent)
@@ -67,11 +77,7 @@ QString SystemSettingsService::settingsPath() const
 
 QString SystemSettingsService::defaultSettingsPath() const
 {
-#ifdef CAMERA_MANAGER_SOURCE_DIR
-    QDir root(QString::fromUtf8(CAMERA_MANAGER_SOURCE_DIR));
-#else
-    QDir root(QCoreApplication::applicationDirPath());
-#endif
+    QDir root(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
     return root.filePath(QStringLiteral("data/config/system.ini"));
 }
 
@@ -109,6 +115,8 @@ void SystemSettingsService::readUiSettings(QSettings& store, UiSettings& setting
     settings.startMaximized = store.value(QStringLiteral("startMaximized"), settings.startMaximized).toBool();
     settings.autoListenDeviceData = store.value(QStringLiteral("autoListenDeviceData"), settings.autoListenDeviceData).toBool();
     settings.autoConnectOnStart = store.value(QStringLiteral("autoConnectOnStart"), settings.autoConnectOnStart).toBool();
+    settings.lastSelectedVideoDeviceId = store.value(QStringLiteral("lastSelectedVideoDeviceId"),
+                                                      settings.lastSelectedVideoDeviceId).toString();
     settings.fontFamily = store.value(QStringLiteral("fontFamily"), settings.fontFamily).toString();
     settings.fontPointSize = store.value(QStringLiteral("fontPointSize"), settings.fontPointSize).toInt();
     settings.captureListMaxRows = store.value(QStringLiteral("captureListMaxRows"), settings.captureListMaxRows).toInt();
@@ -167,6 +175,7 @@ void SystemSettingsService::writeUiSettings(QSettings& store, const UiSettings& 
     store.setValue(QStringLiteral("startMaximized"), settings.startMaximized);
     store.setValue(QStringLiteral("autoListenDeviceData"), settings.autoListenDeviceData);
     store.setValue(QStringLiteral("autoConnectOnStart"), settings.autoConnectOnStart);
+    store.setValue(QStringLiteral("lastSelectedVideoDeviceId"), settings.lastSelectedVideoDeviceId);
     store.setValue(QStringLiteral("fontFamily"), settings.fontFamily);
     store.setValue(QStringLiteral("fontPointSize"), settings.fontPointSize);
     store.setValue(QStringLiteral("captureListMaxRows"), settings.captureListMaxRows);

@@ -23,6 +23,10 @@ public:
     RequestId loadDeviceProfiles(
         QObject* context,
         ApiCompletion<QVector<DeviceProfile>> completion) override;
+    RequestId deleteDeviceProfile(
+        const QString& deviceId,
+        QObject* context,
+        ApiCompletion<void> completion) override;
     RequestId upsertEvents(
         const QVector<VehicleEvent>& events,
         QObject* context,

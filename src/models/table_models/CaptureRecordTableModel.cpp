@@ -8,7 +8,6 @@ namespace {
 
 QString ocrText(const rv1126b::VehicleEvent& event)
 {
-    if (!event.ocrStatus.rawValue.isEmpty()) return event.ocrStatus.rawValue;
     using rv1126b::OcrStatus;
     switch (event.ocrStatus.value) {
     case OcrStatus::Queued: return QStringLiteral("排队中");
@@ -20,7 +19,9 @@ QString ocrText(const rv1126b::VehicleEvent& event)
     case OcrStatus::TimedOut: return QStringLiteral("识别超时");
     case OcrStatus::QueueFull: return QStringLiteral("队列已满");
     case OcrStatus::Unknown:
-    default: return QStringLiteral("未知状态");
+    default: return event.ocrStatus.rawValue.isEmpty()
+        ? QStringLiteral("未知状态")
+        : QStringLiteral("未知：%1").arg(event.ocrStatus.rawValue);
     }
 }
 
@@ -174,15 +175,15 @@ QVariant CaptureRecordTableModel::headerData(int section, Qt::Orientation orient
     case PlateColorColumn:
         return QStringLiteral("车牌颜色");
     case EventTypeColumn:
-        return QStringLiteral("事件类型");
+        return QStringLiteral("OCR 状态");
     case DeviceIdColumn:
         return QStringLiteral("设备编号");
     case DirectionColumn:
         return QStringLiteral("通行朝向");
     case CoordinateColumn:
-        return QStringLiteral("画面坐标参数 (w/c)");
+        return QStringLiteral("事件/轨迹 ID");
     case RemarkColumn:
-        return QStringLiteral("备注");
+        return QStringLiteral("测速状态");
     case SpeedColumn:
         return QStringLiteral("速度");
     case TimeQualityColumn:

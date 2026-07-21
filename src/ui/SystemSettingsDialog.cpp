@@ -100,7 +100,7 @@ QWidget* SystemSettingsDialog::createUiPage()
     frameRateSpin_ = spinBox(1, 60, 12, QStringLiteral(" fps"));
     onlyVehicleFramesCheck_ = checkBox(QStringLiteral("仅显示有车画面"), false);
     overlaySpeedCheck_ = checkBox(QStringLiteral("实时叠加车速"), true);
-    calibrationLinesCheck_ = checkBox(QStringLiteral("显示标定线"), true);
+    calibrationLinesCheck_ = checkBox(QStringLiteral("显示标定线（仅模拟画面）"), true);
     platePositionCombo_ = comboBox({QStringLiteral("right"), QStringLiteral("bottom"), QStringLiteral("hidden")}, QStringLiteral("right"));
     multiSplitCheck_ = checkBox(QStringLiteral("多路视频分屏"), true);
     stopVideoWhenMinimizedCheck_ = checkBox(QStringLiteral("最小化自动停止视频查询"), true);
@@ -133,7 +133,7 @@ QWidget* SystemSettingsDialog::createUiPage()
     }
     form->addRow(QStringLiteral("列表展示字段"), columnsBox);
 
-    form->addRow(QStringLiteral("预览帧率"), frameRateSpin_);
+    form->addRow(QStringLiteral("预览帧率（仅模拟画面）"), frameRateSpin_);
     form->addRow(QString(), onlyVehicleFramesCheck_);
     form->addRow(QString(), overlaySpeedCheck_);
     form->addRow(QString(), calibrationLinesCheck_);

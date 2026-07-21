@@ -56,12 +56,16 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/application/DeviceOperationsController.h
     src/rv1126b/application/EventViewController.cpp
     src/rv1126b/application/EventViewController.h
+    src/rv1126b/application/Rv1126bApplicationRuntime.cpp
+    src/rv1126b/application/Rv1126bApplicationRuntime.h
     src/rv1126b/domain/Models.h
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/ports/IEventRepository.h
     src/rv1126b/ports/ISecretStore.h
     src/rv1126b/network/BoardApiClient.cpp
     src/rv1126b/network/BoardApiClient.h
+    src/rv1126b/network/DirectDeviceProbeService.cpp
+    src/rv1126b/network/DirectDeviceProbeService.h
     src/rv1126b/network/UdpDeviceDiscoveryService.cpp
     src/rv1126b/network/UdpDeviceDiscoveryService.h
     src/rv1126b/protocol/ApiCodec.h
@@ -75,6 +79,8 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/services/BoardEventSyncService.h
     src/rv1126b/services/BoardDeviceSession.cpp
     src/rv1126b/services/BoardDeviceSession.h
+    src/rv1126b/services/BoardDeviceFleetService.cpp
+    src/rv1126b/services/BoardDeviceFleetService.h
     src/rv1126b/services/BoardEvidenceCache.cpp
     src/rv1126b/services/BoardEvidenceCache.h
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
@@ -285,6 +291,8 @@ qt_add_executable(DeviceIntegrationControllerTest
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
     src/rv1126b/domain/Models.h
+    src/rv1126b/network/DirectDeviceProbeService.cpp
+    src/rv1126b/network/DirectDeviceProbeService.h
     src/rv1126b/ports/IRtspPlayer.h
     src/rv1126b/ports/ISecretStore.h
     src/rv1126b/protocol/ApiDtos.h
@@ -339,6 +347,8 @@ qt_add_executable(DeviceIntegrationUiTest
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
     src/rv1126b/domain/Models.h
+    src/rv1126b/network/DirectDeviceProbeService.cpp
+    src/rv1126b/network/DirectDeviceProbeService.h
     src/rv1126b/ports/IRtspPlayer.h
     src/rv1126b/ports/ISecretStore.h
     src/rv1126b/protocol/ApiDtos.h
@@ -449,6 +459,7 @@ set_tests_properties(EventViewUiTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=off
 qt_add_executable(DeviceOperationsControllerTest
     tests/DeviceOperationsControllerTest.cpp
     src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
     src/rv1126b/application/DeviceOperationsController.h
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
@@ -466,6 +477,7 @@ add_test(NAME DeviceOperationsControllerTest COMMAND DeviceOperationsControllerT
 qt_add_executable(DeviceOperationsUiTest
     tests/DeviceOperationsUiTest.cpp
     src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
     src/rv1126b/application/DeviceOperationsController.h
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
@@ -824,6 +836,56 @@ target_compile_definitions(EvidenceCacheMaintenanceServiceTest
 )
 
 add_test(NAME EvidenceCacheMaintenanceServiceTest COMMAND EvidenceCacheMaintenanceServiceTest)
+
+qt_add_executable(ApplicationRuntimeTest
+    tests/ApplicationRuntimeTest.cpp
+    src/rv1126b/application/Rv1126bApplicationRuntime.h
+    src/rv1126b/application/Rv1126bApplicationRuntime.cpp
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/ports/ISecretStore.h
+    src/rv1126b/ports/IRtspPlayer.h
+    src/rv1126b/network/BoardApiClient.cpp
+    src/rv1126b/network/DirectDeviceProbeService.cpp
+    src/rv1126b/network/UdpDeviceDiscoveryService.cpp
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/services/BoardDeviceFleetService.cpp
+    src/rv1126b/services/BoardDeviceSession.cpp
+    src/rv1126b/services/BoardEventSyncService.cpp
+    src/rv1126b/services/BoardEvidenceCache.cpp
+    src/rv1126b/services/BoardFtpService.cpp
+    src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
+    src/rv1126b/services/DeviceDiscoveryService.h
+    src/rv1126b/services/DeviceFleetService.h
+    src/rv1126b/services/DeviceSession.h
+    src/rv1126b/services/EventSyncService.h
+    src/rv1126b/services/EvidenceCache.h
+    src/rv1126b/services/FtpService.h
+    src/rv1126b/security/WindowsCredentialStore.cpp
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayer.cpp
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayer.h
+    src/rv1126b/infrastructure/video/IMediaPlaybackBackend.h
+    src/rv1126b/infrastructure/video/QtMediaPlaybackBackend.cpp
+    src/rv1126b/infrastructure/video/QtMultimediaRtspPlayerFactory.cpp
+)
+target_link_libraries(ApplicationRuntimeTest PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Sql Qt6::Multimedia Qt6::MultimediaWidgets Qt6::Test)
+target_compile_options(ApplicationRuntimeTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME ApplicationRuntimeTest COMMAND ApplicationRuntimeTest)
+set_tests_properties(ApplicationRuntimeTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(DirectDeviceProbeServiceTest
+    tests/DirectDeviceProbeServiceTest.cpp
+    src/rv1126b/network/DirectDeviceProbeService.cpp
+    src/rv1126b/network/DirectDeviceProbeService.h
+    src/rv1126b/protocol/BoardApiCodec.cpp
+    src/rv1126b/protocol/BoardApiCodec.h
+)
+target_link_libraries(DirectDeviceProbeServiceTest PRIVATE Qt6::Network Qt6::Test)
+target_compile_options(DirectDeviceProbeServiceTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME DirectDeviceProbeServiceTest COMMAND DirectDeviceProbeServiceTest)
 
 target_compile_options(CameraManagerApp
     PRIVATE

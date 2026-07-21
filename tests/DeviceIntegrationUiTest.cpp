@@ -180,8 +180,8 @@ void DeviceIntegrationUiTest::discoveryDialogManagesBusySelectionAndSecretInput(
     QVERIFY(table);
 
     QTRY_COMPARE(discoveryService.startCount, 1);
-    QCOMPARE(searchButton->text(), QStringLiteral("正在搜索…"));
-    QVERIFY(!searchButton->isEnabled());
+    QCOMPARE(searchButton->text(), QStringLiteral("取消搜索"));
+    QVERIFY(searchButton->isEnabled());
     QCOMPARE(tokenEdit->echoMode(), QLineEdit::Password);
 
     discoveryService.send(discovered());

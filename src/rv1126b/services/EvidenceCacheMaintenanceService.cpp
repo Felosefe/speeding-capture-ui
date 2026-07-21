@@ -56,6 +56,11 @@ QString EvidenceCacheMaintenanceService::cacheRootPath() const
     return cacheRootPath_;
 }
 
+void EvidenceCacheMaintenanceService::setCacheRootPath(const QString& cacheRootPath)
+{
+    cacheRootPath_ = cacheRootPath;
+}
+
 EvidenceCacheCleanupResult EvidenceCacheMaintenanceService::cleanup(
     const EvidenceCacheCleanupPolicy& policy) const
 {

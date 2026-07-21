@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QStandardPaths>
 #include <QVariant>
 
 namespace rv1126b {
@@ -16,11 +17,7 @@ constexpr int SchemaVersion = 1;
 
 QString defaultDatabasePath()
 {
-#ifdef CAMERA_MANAGER_SOURCE_DIR
-    QDir root(QString::fromUtf8(CAMERA_MANAGER_SOURCE_DIR));
-#else
-    QDir root(QCoreApplication::applicationDirPath());
-#endif
+    QDir root(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
     return root.filePath(QStringLiteral("data/rv1126b_events.sqlite"));
 }
 
@@ -182,6 +179,27 @@ RequestId SqliteEventRepository::loadDeviceProfiles(
         context,
         std::move(completion),
         ApiResult<QVector<DeviceProfile>>::success(std::move(profiles)));
+}
+
+RequestId SqliteEventRepository::deleteDeviceProfile(
+    const QString& deviceId,
+    QObject* context,
+    ApiCompletion<void> completion)
+{
+    QString errorMessage;
+    if (deviceId.trimmed().isEmpty() || !openDatabase(&errorMessage)) {
+        if (errorMessage.isEmpty()) errorMessage = QStringLiteral("Device id is required.");
+        return finish<void>(context, std::move(completion),
+                            ApiResult<void>::failure(storageError(errorMessage)));
+    }
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral("DELETE FROM rv_devices WHERE device_id = :device_id"));
+    query.bindValue(QStringLiteral(":device_id"), deviceId);
+    if (!query.exec()) {
+        return finish<void>(context, std::move(completion),
+                            ApiResult<void>::failure(storageError(sqlErrorText(query))));
+    }
+    return finish<void>(context, std::move(completion), ApiResult<void>::success());
 }
 
 RequestId SqliteEventRepository::upsertEvents(

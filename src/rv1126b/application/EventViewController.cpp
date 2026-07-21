@@ -112,7 +112,7 @@ void EventViewController::attachSyncService(EventSyncService* service)
     connect(service, &QObject::destroyed, this, [this, deviceId]() {
         syncServices_.remove(deviceId);
     });
-    if (sessionStates_.value(deviceId) == DeviceSessionState::Online && !service->isRunning()) {
+    if (syncEnabled_ && sessionStates_.value(deviceId) == DeviceSessionState::Online && !service->isRunning()) {
         service->start();
     }
 }
@@ -125,13 +125,27 @@ void EventViewController::setDeviceSession(const DeviceSessionSnapshot& snapshot
     if (!service) {
         return;
     }
-    if (snapshot.state == DeviceSessionState::Online) {
+    if (syncEnabled_ && snapshot.state == DeviceSessionState::Online) {
         if (!service->isRunning()) service->start();
     } else if (snapshot.state == DeviceSessionState::Disconnected
                || snapshot.state == DeviceSessionState::AuthenticationFailed) {
         stopDevice(deviceId);
     }
 }
+
+void EventViewController::setSyncEnabled(bool enabled)
+{
+    if (syncEnabled_ == enabled) return;
+    syncEnabled_ = enabled;
+    for (EventSyncService* service : std::as_const(syncServices_)) {
+        if (!service) continue;
+        if (!enabled) service->stop();
+        else if (sessionStates_.value(service->deviceId()) == DeviceSessionState::Online)
+            service->start();
+    }
+}
+
+bool EventViewController::syncEnabled() const { return syncEnabled_; }
 
 void EventViewController::refreshRealtime(const QString& deviceId, bool allDevices, int limit)
 {

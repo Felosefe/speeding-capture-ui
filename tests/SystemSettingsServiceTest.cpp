@@ -43,6 +43,7 @@ void SystemSettingsServiceTest::persistsSettingsAndClampsInvalidNumericValues()
     SystemSettings settings = SystemSettings::defaults();
     settings.ui.startMaximized = true;
     settings.ui.autoConnectOnStart = true;
+    settings.ui.lastSelectedVideoDeviceId = QStringLiteral("rv1126b-last-video");
     settings.ui.fontFamily = QStringLiteral("Arial");
     settings.ui.fontPointSize = 200;
     settings.ui.previewFrameRate = 0;
@@ -59,6 +60,7 @@ void SystemSettingsServiceTest::persistsSettingsAndClampsInvalidNumericValues()
 
     QVERIFY(loaded.ui.startMaximized);
     QVERIFY(loaded.ui.autoConnectOnStart);
+    QCOMPARE(loaded.ui.lastSelectedVideoDeviceId, QStringLiteral("rv1126b-last-video"));
     QCOMPARE(loaded.ui.fontFamily, QStringLiteral("Arial"));
     QCOMPARE(loaded.ui.fontPointSize, 48);
     QCOMPARE(loaded.ui.previewFrameRate, 1);

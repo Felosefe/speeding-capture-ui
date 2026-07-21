@@ -8,6 +8,7 @@
 #include <QImageReader>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QStandardPaths>
 
 #include <algorithm>
 #include <array>
@@ -22,11 +23,7 @@ qint64 nowEpochMs()
 
 QString defaultCacheRootPath()
 {
-#ifdef CAMERA_MANAGER_SOURCE_DIR
-    QDir root(QString::fromUtf8(CAMERA_MANAGER_SOURCE_DIR));
-#else
-    QDir root(QCoreApplication::applicationDirPath());
-#endif
+    QDir root(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
     return root.filePath(QStringLiteral("data/evidence-cache"));
 }
 
@@ -52,8 +49,21 @@ BoardEvidenceCache::BoardEvidenceCache(
     IEventRepository* repository,
     QString cacheRootPath,
     QObject* parent)
+    : BoardEvidenceCache(
+          [apiClient](const QString&) { return apiClient; },
+          repository,
+          std::move(cacheRootPath),
+          parent)
+{
+}
+
+BoardEvidenceCache::BoardEvidenceCache(
+    ApiClientResolver apiClientResolver,
+    IEventRepository* repository,
+    QString cacheRootPath,
+    QObject* parent)
     : EvidenceCache(parent)
-    , apiClient_(apiClient)
+    , apiClientResolver_(std::move(apiClientResolver))
     , repository_(repository)
     , cacheRootPath_(std::move(cacheRootPath))
 {
@@ -131,8 +141,8 @@ void BoardEvidenceCache::cancel(const EventIdentity& identity)
         return;
     }
 
-    if (apiClient_) {
-        apiClient_->cancel(activeIt->requestId);
+    if (activeIt->apiClient) {
+        activeIt->apiClient->cancel(activeIt->requestId);
     }
     QFile::remove(activeIt->partFilePath);
     finishActive(identity);
@@ -173,8 +183,8 @@ void BoardEvidenceCache::cancelAll()
 
     const QVector<ActiveDownload> activeDownloads = active_.values();
     for (const ActiveDownload& active : activeDownloads) {
-        if (apiClient_) {
-            apiClient_->cancel(active.requestId);
+        if (active.apiClient) {
+            active.apiClient->cancel(active.requestId);
         }
         QFile::remove(active.partFilePath);
     }
@@ -187,6 +197,14 @@ QString BoardEvidenceCache::finalPathFor(const VehicleEvent& event) const
     QDir root(cacheRootPath_);
     return root.filePath(QStringLiteral("%1/%2.jpg")
         .arg(sanitizePathSegment(event.identity.deviceId), eventFileStem(event)));
+}
+
+bool BoardEvidenceCache::setCacheRootPath(const QString& cacheRootPath)
+{
+    const QString normalized = QDir::cleanPath(cacheRootPath.trimmed());
+    if (normalized.isEmpty() || !QDir().mkpath(normalized)) return false;
+    cacheRootPath_ = normalized;
+    return true;
 }
 
 void BoardEvidenceCache::drainQueue()
@@ -217,7 +235,8 @@ bool BoardEvidenceCache::canStart(const VehicleEvent& event) const
 
 void BoardEvidenceCache::startDownload(const VehicleEvent& event)
 {
-    if (!apiClient_ || !repository_) {
+    IBoardApiClient* apiClient = apiClientResolver_ ? apiClientResolver_(event.identity.deviceId) : nullptr;
+    if (!apiClient || !repository_) {
         persistFailure(
             event,
             EvidenceCacheStatus::Failed,
@@ -241,6 +260,7 @@ void BoardEvidenceCache::startDownload(const VehicleEvent& event)
     active.entry = entryFor(event, EvidenceCacheStatus::Downloading);
     active.entry.localFilePath = finalPathFor(event);
     active.partFilePath = partFilePath;
+    active.apiClient = apiClient;
 
     activePerDevice_[event.identity.deviceId] = activePerDevice_.value(event.identity.deviceId, 0) + 1;
     persistState(active.entry);
@@ -248,7 +268,7 @@ void BoardEvidenceCache::startDownload(const VehicleEvent& event)
     const EventIdentity identity = event.identity;
     active_.insert(identity, active);
 
-    const RequestId requestId = apiClient_->downloadEvidenceToPartFile(
+    const RequestId requestId = apiClient->downloadEvidenceToPartFile(
         event.identity,
         event.evidenceRelativeUrl,
         partFilePath,

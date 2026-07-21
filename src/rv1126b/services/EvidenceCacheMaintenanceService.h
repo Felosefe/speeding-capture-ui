@@ -37,6 +37,7 @@ public:
         QObject* parent = nullptr);
 
     QString cacheRootPath() const;
+    void setCacheRootPath(const QString& cacheRootPath);
     EvidenceCacheCleanupResult cleanup(const EvidenceCacheCleanupPolicy& policy) const;
 
 private:

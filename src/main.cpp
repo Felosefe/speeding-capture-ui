@@ -1,10 +1,13 @@
 #include "ui/MainWindow.h"
 #include "rv1126b/infrastructure/video/QtMultimediaRtspPlayer.h"
+#include "rv1126b/application/Rv1126bApplicationRuntime.h"
+#include "services/SystemSettingsService.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QMessageBox>
 
 int main(int argc, char* argv[])
 {
@@ -25,14 +28,28 @@ int main(int argc, char* argv[])
     parser.process(app);
 
     const bool mockMode = parser.isSet(mockOption);
-    auto* player = mockMode ? nullptr : new rv1126b::QtMultimediaRtspPlayer(&app);
-    MainWindowDependencies dependencies;
-    dependencies.player = player;
-    dependencies.mockMode = mockMode;
-
-    auto* window = new MainWindow(dependencies);
-    window->setAttribute(Qt::WA_DeleteOnClose);
-    window->show();
+    if (mockMode) {
+        MainWindowDependencies dependencies;
+        dependencies.mockMode = true;
+        auto* window = new MainWindow(dependencies);
+        window->setAttribute(Qt::WA_DeleteOnClose);
+        window->show();
+    } else {
+        SystemSettingsService settingsService;
+        auto* runtime = new rv1126b::Rv1126bApplicationRuntime(settingsService.load(), &app);
+        runtime->initialize(&app, [runtime, &app](rv1126b::ApiResult<void> result) {
+            if (!result) {
+                QMessageBox::critical(nullptr, QStringLiteral("RV1126B 初始化失败"),
+                                      QStringLiteral("无法初始化设备数据库或生产服务：%1")
+                                          .arg(result.error().message));
+                QMetaObject::invokeMethod(&app, &QCoreApplication::quit, Qt::QueuedConnection);
+                return;
+            }
+            auto* window = new MainWindow(runtime->mainWindowDependencies());
+            window->setAttribute(Qt::WA_DeleteOnClose);
+            window->show();
+        });
+    }
 
     return app.exec();
 }

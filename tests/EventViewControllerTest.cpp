@@ -14,6 +14,8 @@ public:
     RequestId upsertDevice(const DeviceProfile&, QObject*, ApiCompletion<void> c) override { return done(std::move(c)); }
     RequestId loadDeviceProfiles(QObject*, ApiCompletion<QVector<DeviceProfile>> c) override
     { return value(std::move(c), QVector<DeviceProfile>{}); }
+    RequestId deleteDeviceProfile(const QString&, QObject*, ApiCompletion<void> c) override
+    { return done(std::move(c)); }
     RequestId upsertEvents(const QVector<VehicleEvent>&, QObject*, ApiCompletion<void> c) override { return done(std::move(c)); }
     RequestId saveDetail(const EventDetailSnapshot&, QObject*, ApiCompletion<void> c) override { return done(std::move(c)); }
 

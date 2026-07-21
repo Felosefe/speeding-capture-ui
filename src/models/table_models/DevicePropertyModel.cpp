@@ -62,11 +62,15 @@ void DevicePropertyModel::setDevice(const Device* device, const CaptureRecord* l
 
     beginResetModel();
     properties_ = {
+        {QStringLiteral("设备 ID"), device->id},
         {QStringLiteral("设备名称"), device->name},
         {QStringLiteral("设备状态"), connectionStateText(device->status.connectionState)},
         {QStringLiteral("运行状态"), device->status.runningState},
         {QStringLiteral("IP 地址"), device->ipAddress},
         {QStringLiteral("端口"), QString::number(device->port)},
+        {QStringLiteral("API URL"), device->apiUrl.isEmpty() ? QStringLiteral("-") : device->apiUrl},
+        {QStringLiteral("能力声明"), device->capabilities.isEmpty() ? QStringLiteral("未声明（不隐藏功能）")
+                                                                    : device->capabilities.join(QStringLiteral(", "))},
         {QStringLiteral("地点"), device->config.location},
         {QStringLiteral("通道"), device->config.laneName},
         {QStringLiteral("方向"), device->config.direction},
@@ -76,6 +80,10 @@ void DevicePropertyModel::setDevice(const Device* device, const CaptureRecord* l
         {QStringLiteral("最后心跳"), device->status.lastHeartbeat.isValid()
              ? device->status.lastHeartbeat.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
              : QStringLiteral("-")},
+        {QStringLiteral("最后在线"), device->lastOnline.isValid()
+             ? device->lastOnline.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+             : QStringLiteral("-")},
+        {QStringLiteral("最后错误"), device->lastError.isEmpty() ? QStringLiteral("-") : device->lastError},
         {QStringLiteral("最后抓拍"), latestRecord
              ? latestRecord->timestamp.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
              : QStringLiteral("-")},

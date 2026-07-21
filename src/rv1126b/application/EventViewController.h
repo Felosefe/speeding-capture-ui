@@ -36,6 +36,8 @@ public:
     void refreshRealtime(const QString& deviceId, bool allDevices, int limit);
     void queryHistory(const EventQuery& query);
     void setPaused(bool paused);
+    void setSyncEnabled(bool enabled);
+    bool syncEnabled() const;
     void requestEvidence(const VehicleEvent& event);
     void deleteLocalEvent(const VehicleEvent& event);
     void clearLocalHistory(const EventQuery& query);
@@ -75,6 +77,7 @@ private:
     bool realtimeMode_ = true;
     bool paused_ = false;
     bool shutdown_ = false;
+    bool syncEnabled_ = true;
     int pendingChangeCount_ = 0;
     quint64 queryGeneration_ = 0;
     RequestId activeListRequest_;
