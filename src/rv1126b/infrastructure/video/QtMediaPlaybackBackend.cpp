@@ -1,21 +1,67 @@
 #include "QtMediaPlaybackBackend.h"
 
+#include <QImage>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QPainter>
+#include <QPaintEvent>
 #include <QVideoFrame>
 #include <QVideoSink>
-#include <QVideoWidget>
+#include <QWidget>
+
+namespace {
+
+class VideoFrameWidget final : public QWidget
+{
+public:
+    explicit VideoFrameWidget(QWidget* parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(640, 360);
+        setAutoFillBackground(false);
+        setAttribute(Qt::WA_OpaquePaintEvent);
+    }
+
+    void setFrame(const QImage& frame)
+    {
+        frame_ = frame;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(0, 0, 0));
+        if (frame_.isNull()) {
+            return;
+        }
+
+        QSize targetSize = frame_.size();
+        targetSize.scale(size(), Qt::KeepAspectRatio);
+        const QRect target(
+            (width() - targetSize.width()) / 2,
+            (height() - targetSize.height()) / 2,
+            targetSize.width(),
+            targetSize.height());
+        painter.drawImage(target, frame_);
+    }
+
+private:
+    QImage frame_;
+};
+
+} // namespace
 
 namespace rv1126b {
 
 QtMediaPlaybackBackend::QtMediaPlaybackBackend(QObject* parent)
     : IMediaPlaybackBackend(parent)
     , mediaPlayer_(new QMediaPlayer(this))
-    , videoWidget_(new QVideoWidget)
+    , videoSink_(new QVideoSink(this))
+    , videoWidget_(new VideoFrameWidget)
 {
-    videoWidget_->setMinimumSize(640, 360);
-    videoWidget_->setAspectRatioMode(Qt::KeepAspectRatio);
-    mediaPlayer_->setVideoOutput(videoWidget_);
+    mediaPlayer_->setVideoOutput(videoSink_);
 }
 
 QtMediaPlaybackBackend::~QtMediaPlaybackBackend()
@@ -31,15 +77,11 @@ void QtMediaPlaybackBackend::play(const QUrl& url, quint64 attemptToken)
 {
     stop();
 
-    if (videoWidget_) {
-        attemptConnections_.append(connect(
-            videoWidget_->videoSink(), &QVideoSink::videoFrameChanged, this,
-            [this, attemptToken](const QVideoFrame& frame) {
-                if (frame.isValid()) {
-                    emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
-                }
-            }));
-    }
+    attemptConnections_.append(connect(
+        videoSink_, &QVideoSink::videoFrameChanged, this,
+        [this, attemptToken](const QVideoFrame& frame) {
+            handleVideoFrame(frame, attemptToken);
+        }));
 
     attemptConnections_.append(connect(
         mediaPlayer_, &QMediaPlayer::errorOccurred, this,
@@ -99,6 +141,17 @@ void QtMediaPlaybackBackend::stop()
 QWidget* QtMediaPlaybackBackend::outputWidget() const
 {
     return videoWidget_;
+}
+
+void QtMediaPlaybackBackend::handleVideoFrame(const QVideoFrame& frame, quint64 attemptToken)
+{
+    if (!frame.isValid()) {
+        return;
+    }
+    if (videoWidget_) {
+        static_cast<VideoFrameWidget*>(videoWidget_.data())->setFrame(frame.toImage());
+    }
+    emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
 }
 
 void QtMediaPlaybackBackend::disconnectAttemptSignals()

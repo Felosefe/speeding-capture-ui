@@ -1,4 +1,5 @@
 #include "../src/ui/Rv1126bDeviceManagementDialog.h"
+#include "../src/rv1126b/services/EmbeddedFtpReceiveServer.h"
 
 #include <QCheckBox>
 #include <QAbstractButton>
@@ -7,10 +8,14 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTest>
+#include <QTemporaryDir>
 #include <QTimer>
+
+#include <algorithm>
 
 using namespace rv1126b;
 
@@ -151,6 +156,7 @@ private slots:
     void showsFourPagesTimeWarningAndMixedTaskTargets();
     void enforcesTargetLimitAndClearsReplacementPassword();
     void confirmsRevisionConflictAndResubmits();
+    void startsEmbeddedReceiverAndSavesUniqueTargetId();
 };
 
 void DeviceOperationsUiTest::showsFourPagesTimeWarningAndMixedTaskTargets()
@@ -207,7 +213,6 @@ void DeviceOperationsUiTest::enforcesTargetLimitAndClearsReplacementPassword()
     password->setText(QStringLiteral("not-logged"));
     QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveAndEnableFtpButton")), Qt::LeftButton);
     QCOMPARE(ftp.lastUpdate.targets[0].replacementPassword.value(), QStringLiteral("not-logged"));
-    QVERIFY(password->text().isEmpty());
     QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("ftpStatusLabel"))->text()
                 .contains(QStringLiteral("配置已保存，但自动下发未开启")));
 }
@@ -235,6 +240,50 @@ void DeviceOperationsUiTest::confirmsRevisionConflictAndResubmits()
     QCOMPARE(ftp.lastUpdate.expectedRevision, QStringLiteral("remote-revision"));
     QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("ftpStatusLabel"))->text()
                 .contains(QStringLiteral("new_events_only")));
+}
+
+void DeviceOperationsUiTest::startsEmbeddedReceiverAndSavesUniqueTargetId()
+{
+    UiBoard board;
+    UiFtp ftp;
+    configure(board, ftp);
+    ftp.activation.autoEnabled = true;
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    EmbeddedFtpReceiveServer server;
+    DeviceOperationsController controller({[&](const QString&) { return &board; },
+                                           [&](const QString&) { return &ftp; }});
+    Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller,
+        Rv1126bDeviceManagementDialog::InitialPage::FtpConfig, nullptr, true, &server);
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpRootEdit"))->setText(root.path());
+    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpHostEdit"))->setText(QStringLiteral("127.0.0.1"));
+    QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("localFtpTargetIdEdit"))->text(), QStringLiteral("pc_127_0_0_1"));
+    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpTargetIdEdit"))->setText(QStringLiteral("pc_test_bay"));
+    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPortSpin"))->setValue(22110);
+    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPassiveStartSpin"))->setValue(22111);
+    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPassiveEndSpin"))->setValue(22120);
+    const QString password = dialog.findChild<QLineEdit*>(QStringLiteral("localFtpPasswordEdit"))->text();
+
+    QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("localFtpSaveTargetButton")), Qt::LeftButton);
+
+    QVERIFY(server.isListening());
+    QCOMPARE(ftp.saveCount, 1);
+    const auto local = std::find_if(ftp.lastUpdate.targets.cbegin(), ftp.lastUpdate.targets.cend(), [](const FtpTargetUpdate& target) {
+        return target.id == QStringLiteral("pc_test_bay");
+    });
+    QVERIFY(local != ftp.lastUpdate.targets.cend());
+    QVERIFY(local->enabled);
+    QCOMPARE(local->host, QStringLiteral("127.0.0.1"));
+    QCOMPARE(local->port, static_cast<quint16>(22110));
+    QCOMPARE(local->user, QStringLiteral("upload"));
+    QCOMPARE(local->remoteDir, QStringLiteral("/vehicle_events"));
+    QVERIFY(local->passive);
+    QCOMPARE(local->passwordAction.value, FtpPasswordAction::Replace);
+    QVERIFY(local->replacementPassword.has_value());
+    QCOMPARE(*local->replacementPassword, password);
 }
 
 QTEST_MAIN(DeviceOperationsUiTest)

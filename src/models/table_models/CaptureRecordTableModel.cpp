@@ -8,6 +8,11 @@ namespace {
 
 QString ocrText(const rv1126b::VehicleEvent& event)
 {
+    if (event.captureStatus == QStringLiteral("failed")) {
+        return event.captureError.isEmpty()
+            ? QStringLiteral("抓拍失败")
+            : QStringLiteral("抓拍失败：%1").arg(event.captureError);
+    }
     using rv1126b::OcrStatus;
     switch (event.ocrStatus.value) {
     case OcrStatus::Queued: return QStringLiteral("排队中");
@@ -32,6 +37,8 @@ QString qualityText(rv1126b::TimeQuality quality)
     case TimeQuality::NativeUtc: return QStringLiteral("UTC 已验证");
     case TimeQuality::ConfiguredOffset: return QStringLiteral("已应用偏移");
     case TimeQuality::BoardEpochUnverified: return QStringLiteral("板端时间未校验");
+    case TimeQuality::AppApiSetCurrentBoot: return QStringLiteral("本次启动已由应用校时");
+    case TimeQuality::RtcRestoredCurrentBoot: return QStringLiteral("本次启动 RTC 已恢复");
     case TimeQuality::Unknown:
     default: return QStringLiteral("时间质量未知");
     }

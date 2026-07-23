@@ -118,6 +118,23 @@ RequestId BoardApiClient::downloadEvidenceToPartFile(
     return startEvidenceRequest(url, partFilePath, context, std::move(completion));
 }
 
+RequestId BoardApiClient::putClientAck(
+    const EventIdentity& identity,
+    const ClientAckCreate& request,
+    QObject* context,
+    ApiCompletion<ClientAckDto> completion)
+{
+    if (!codec_) return returnTypedError(context, std::move(completion), localError(
+        QStringLiteral("rv1126b.api.invalid_dependencies"), QStringLiteral("Missing API codec."), ApiErrorCategory::Validation));
+    const auto body = codec_->encodeClientAck(request);
+    if (!body.isSuccess()) return returnTypedError(context, std::move(completion), body.error());
+    ApiError error;
+    const QUrl url = eventUrl(identity, QStringLiteral("/ack"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PutOperation, url, body.value(), context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseClientAck(payload); });
+}
+
 RequestId BoardApiClient::getEvidenceConfig(QObject* context, ApiCompletion<EvidenceConfigDto> completion)
 {
     ApiError error;
@@ -163,6 +180,78 @@ RequestId BoardApiClient::putTime(const TimeUpdate& update, QObject* context, Ap
     if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
     return startDecodedJson(QNetworkAccessManager::PutOperation, url, body.value(), context, std::move(completion),
         [this](const QByteArray& payload) { return codec_->parseTimeStatus(payload); });
+}
+
+RequestId BoardApiClient::getTriggerModeConfig(QObject* context, ApiCompletion<TriggerModeConfigDto> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/trigger-mode"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::GetOperation, url, {}, context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseTriggerModeConfig(payload); });
+}
+
+RequestId BoardApiClient::putTriggerModeConfig(
+    const TriggerModeUpdate& update,
+    QObject* context,
+    ApiCompletion<TriggerModeConfigDto> completion)
+{
+    if (!codec_) return returnTypedError(context, std::move(completion), localError(
+        QStringLiteral("rv1126b.api.invalid_dependencies"), QStringLiteral("Missing API codec."), ApiErrorCategory::Validation));
+    const auto body = codec_->encodeTriggerModeConfig(update);
+    if (!body.isSuccess()) return returnTypedError(context, std::move(completion), body.error());
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/trigger-mode"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PutOperation, url, body.value(), context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseTriggerModeConfig(payload); },
+        ConfigApplyFirstResponseTimeoutMs,
+        ConfigApplyRequestTimeoutMs);
+}
+
+RequestId BoardApiClient::getLineRegionConfig(QObject* context, ApiCompletion<LineRegionConfigDto> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/line-region"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::GetOperation, url, {}, context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseLineRegionConfig(payload); });
+}
+
+RequestId BoardApiClient::putLineRegionConfig(
+    const LineRegionUpdate& update,
+    QObject* context,
+    ApiCompletion<LineRegionConfigDto> completion)
+{
+    if (!codec_) return returnTypedError(context, std::move(completion), localError(
+        QStringLiteral("rv1126b.api.invalid_dependencies"), QStringLiteral("Missing API codec."), ApiErrorCategory::Validation));
+    const auto body = codec_->encodeLineRegionConfig(update);
+    if (!body.isSuccess()) return returnTypedError(context, std::move(completion), body.error());
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/line-region"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PutOperation, url, body.value(), context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseLineRegionConfig(payload); },
+        ConfigApplyFirstResponseTimeoutMs,
+        ConfigApplyRequestTimeoutMs);
+}
+
+RequestId BoardApiClient::applyRuntimeConfig(
+    const RuntimeApplyUpdate& update,
+    QObject* context,
+    ApiCompletion<RuntimeApplyDto> completion)
+{
+    if (!codec_) return returnTypedError(context, std::move(completion), localError(
+        QStringLiteral("rv1126b.api.invalid_dependencies"), QStringLiteral("Missing API codec."), ApiErrorCategory::Validation));
+    const auto body = codec_->encodeRuntimeApply(update);
+    if (!body.isSuccess()) return returnTypedError(context, std::move(completion), body.error());
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/runtime/apply"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PostOperation, url, body.value(), context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseRuntimeApply(payload); },
+        ConfigApplyFirstResponseTimeoutMs,
+        ConfigApplyRequestTimeoutMs);
 }
 
 RequestId BoardApiClient::getFtpConfig(QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion)
@@ -309,7 +398,9 @@ RequestId BoardApiClient::startJsonRequest(
     const QUrl& url,
     const QByteArray& body,
     QObject* context,
-    ApiCompletion<QByteArray> completion)
+    ApiCompletion<QByteArray> completion,
+    int firstResponseTimeoutMs,
+    int transferTimeoutMs)
 {
     const RequestId requestId = RequestId::createUuid();
     if (!codec_ || !secretStore_) {
@@ -326,7 +417,7 @@ RequestId BoardApiClient::startJsonRequest(
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Accept", "application/json");
-    request.setTransferTimeout(JsonRequestTimeoutMs);
+    request.setTransferTimeout(transferTimeoutMs);
     ApiError authorizationError;
     if (!applyAuthorization(&request, &authorizationError)) {
         queueCompletion(context, std::move(completion), ApiResult<QByteArray>::failure(authorizationError));
@@ -364,7 +455,7 @@ RequestId BoardApiClient::startJsonRequest(
             if (pending.reply) pending.reply->abort();
         });
     }
-    timer->start(JsonConnectTimeoutMs);
+    timer->start(firstResponseTimeoutMs);
     return requestId;
 }
 

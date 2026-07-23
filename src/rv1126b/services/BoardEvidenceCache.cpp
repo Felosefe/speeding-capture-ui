@@ -28,7 +28,6 @@ QString defaultCacheRootPath()
 }
 
 constexpr std::array<int, 6> RetryBackoffSeconds {1, 2, 4, 8, 16, 30};
-
 bool hasIdentity(const VehicleEvent& event, const EventIdentity& identity)
 {
     return event.identity == identity;
@@ -319,9 +318,16 @@ void BoardEvidenceCache::handleDownloadFinished(
     EvidenceCacheEntry entry = entryFor(event, EvidenceCacheStatus::Available);
     entry.localFilePath = finalPath;
     entry.contentLength = QFileInfo(finalPath).size();
+    QPointer<IBoardApiClient> apiClient = activeIt->apiClient;
     finishActive(identity);
     retryAttempts_.remove(identity);
     persistState(entry);
+    ClientAckCreate ack;
+    ack.clientId = QStringLiteral("qt_primary");
+    ack.evidenceSize = entry.contentLength;
+    if (apiClient) {
+        apiClient->putClientAck(identity, ack, this, [](ApiResult<ClientAckDto>) {});
+    }
     drainQueue();
 }
 

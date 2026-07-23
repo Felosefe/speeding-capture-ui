@@ -19,6 +19,8 @@ class QTabWidget;
 class QTableWidget;
 class QTimer;
 
+namespace rv1126b { class EmbeddedFtpReceiveServer; }
+
 class Rv1126bDeviceManagementDialog final : public QDialog
 {
     Q_OBJECT
@@ -31,7 +33,9 @@ public:
         rv1126b::DeviceOperationsController* controller,
         InitialPage initialPage = InitialPage::Evidence,
         QWidget* parent = nullptr,
-        bool deviceOnline = true);
+        bool deviceOnline = true,
+        rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer = nullptr,
+        const QString& localFtpRootPath = QString());
     ~Rv1126bDeviceManagementDialog() override;
 
 protected:
@@ -59,6 +63,15 @@ private:
     void createTask();
     void refreshTasks();
     void updateTaskRefreshState();
+    void startLocalFtpReceiver();
+    void stopLocalFtpReceiver();
+    void applyLocalFtpTarget(bool saveAndEnable);
+    void updateLocalFtpReceiverState();
+    QString defaultLocalFtpAddress() const;
+    QString defaultLocalFtpTargetId(const QString& host) const;
+    int localFtpTargetRow() const;
+    void syncLocalFtpTargetIdFromHost();
+    void writeLocalFtpTargetRow();
     void showRevisionConflict(const rv1126b::FtpConfigSnapshotDto& remote,
                               const rv1126b::FtpConfigUpdate& local,
                               const QStringList& passwordTargetIds);
@@ -67,6 +80,8 @@ private:
 
     QString deviceId_;
     rv1126b::DeviceOperationsController* controller_ = nullptr;
+    rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
+    QString localFtpRootPath_;
     QTabWidget* tabs_ = nullptr;
     QLabel* globalMessage_ = nullptr;
 
@@ -99,6 +114,18 @@ private:
     QLabel* ftpStatus_ = nullptr;
     QPushButton* saveFtpButton_ = nullptr;
     QString ftpRevision_;
+    QLineEdit* localFtpRootEdit_ = nullptr;
+    QLineEdit* localFtpHostEdit_ = nullptr;
+    QLineEdit* localFtpTargetIdEdit_ = nullptr;
+    QSpinBox* localFtpPortSpin_ = nullptr;
+    QSpinBox* localFtpPassiveStartSpin_ = nullptr;
+    QSpinBox* localFtpPassiveEndSpin_ = nullptr;
+    QLineEdit* localFtpUserEdit_ = nullptr;
+    QLineEdit* localFtpPasswordEdit_ = nullptr;
+    QLabel* localFtpStatus_ = nullptr;
+    QPushButton* localFtpStartButton_ = nullptr;
+    QPushButton* localFtpStopButton_ = nullptr;
+    bool localFtpTargetIdAuto_ = true;
 
     QDateTimeEdit* taskStartEdit_ = nullptr;
     QDateTimeEdit* taskEndEdit_ = nullptr;

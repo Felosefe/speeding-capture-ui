@@ -87,6 +87,8 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/services/BoardFtpTaskSnapshotService.h
     src/rv1126b/services/BoardFtpService.cpp
     src/rv1126b/services/BoardFtpService.h
+    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/rv1126b/services/EventSyncService.h
     src/rv1126b/services/EvidenceCache.h
     src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
@@ -485,6 +487,8 @@ qt_add_executable(DeviceOperationsUiTest
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/protocol/ApiDtos.h
     src/rv1126b/services/FtpService.h
+    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/ui/Rv1126bDeviceManagementDialog.cpp
     src/ui/Rv1126bDeviceManagementDialog.h
 )
@@ -647,6 +651,22 @@ target_compile_options(BoardFtpServiceTest
 )
 
 add_test(NAME BoardFtpServiceTest COMMAND BoardFtpServiceTest)
+
+qt_add_executable(EmbeddedFtpReceiveServerTest
+    tests/EmbeddedFtpReceiveServerTest.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.h
+)
+
+target_link_libraries(EmbeddedFtpReceiveServerTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Network
+        Qt6::Test
+)
+
+target_compile_options(EmbeddedFtpReceiveServerTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME EmbeddedFtpReceiveServerTest COMMAND EmbeddedFtpReceiveServerTest)
 
 qt_add_executable(SqliteEventRepositoryTest
     tests/SqliteEventRepositoryTest.cpp

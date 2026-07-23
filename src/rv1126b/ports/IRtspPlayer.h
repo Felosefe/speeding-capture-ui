@@ -4,6 +4,7 @@
 
 #include <QMetaType>
 #include <QObject>
+#include <QSize>
 #include <QString>
 #include <QUrl>
 
@@ -52,6 +53,7 @@ public:
 signals:
     void stateChanged(rv1126b::RtspPlayerState state);
     void errorOccurred(const rv1126b::ApiError& error);
+    void videoFrameReceived(QSize frameSize);
 };
 
 } // namespace rv1126b

@@ -95,6 +95,8 @@ struct EventSummaryDto {
     QString plateColor;
     QString evidenceStatus;
     bool evidenceAvailable = false;
+    QString captureStatus;
+    QString captureError;
     QString detailRelativeUrl;
     QString evidenceRelativeUrl;
     QJsonObject rawJson;
@@ -118,6 +120,7 @@ struct EventDetailDto {
     QJsonObject radar;
     QJsonObject ocr;
     QJsonObject images;
+    QJsonObject captureTiming;
     std::optional<QString> evidenceRelativeUrl;
     QJsonObject rawJson;
 };
@@ -150,6 +153,77 @@ struct TimeStatusDto {
     QString timezoneContract;
     QString ntpStatus;
     bool timeSetEnabled = false;
+    QJsonObject rawJson;
+};
+
+struct TriggerModeConfigDto {
+    QString apiVersion;
+    QString revision;
+    QString triggerMode;
+    QStringList supportedModes;
+    bool writeEnabled = false;
+    bool restartRequired = false;
+    QString applyMode;
+    QString runtimeRevision;
+    QString applyEndpoint;
+    QJsonObject rawJson;
+};
+
+struct TriggerModeUpdate {
+    QString expectedRevision;
+    QString triggerMode;
+};
+
+struct LineRegionSettings {
+    int leftPermille = 0;
+    int rightPermille = 1000;
+    int lightLineEnabled = 0;
+    int lightLinePermille = 100;
+    int preLinePermille = 200;
+    int triggerLinePermille = 360;
+    int downLightLinePermille = 100;
+    int downPreLinePermille = 200;
+    int downTriggerLinePermille = 360;
+    int upLightLinePermille = 460;
+    int upPreLinePermille = 360;
+    int upTriggerLinePermille = 200;
+    int direction = 1;
+    int bidirectional = 0;
+    QString lightColor;
+    QString preColor;
+    QString triggerColor;
+};
+
+struct LineRegionConfigDto {
+    QString apiVersion;
+    QString revision;
+    bool writeEnabled = false;
+    LineRegionSettings lineRegion;
+    bool restartRequired = false;
+    QString applyMode;
+    QString runtimeRevision;
+    QString coordinateSpace;
+    QString applyEndpoint;
+    QJsonObject rawJson;
+};
+
+struct LineRegionUpdate {
+    QString expectedRevision;
+    LineRegionSettings lineRegion;
+};
+
+struct RuntimeApplyUpdate {
+    QString expectedRevision;
+    QString scope = QStringLiteral("rkipc");
+};
+
+struct RuntimeApplyDto {
+    QString apiVersion;
+    QString runtimeRevision;
+    QString state;
+    QString restartScope;
+    QString oldRkipcPid;
+    QString newRkipcPid;
     QJsonObject rawJson;
 };
 
@@ -212,6 +286,10 @@ struct FtpControlDto {
     QString revision;
     bool enabled = false;
     WireEnum<FtpControlScope> scope;
+    qint64 minEventEpochMs = -1;
+    bool writeEnabled = true;
+    bool restartRequired = false;
+    QString applyMode;
     QJsonObject rawJson;
 };
 
@@ -246,6 +324,7 @@ struct FtpTaskSummaryDto {
 struct FtpTaskDetailDto {
     FtpTaskSummaryDto summary;
     QVector<FtpTaskTargetStatusDto> targets;
+    qint64 retryQueued = -1;
     QJsonObject rawJson;
 };
 
@@ -255,6 +334,22 @@ struct FtpTaskPageDto {
     int count = 0;
     bool hasMore = false;
     std::optional<QString> nextCursor;
+    QJsonObject rawJson;
+};
+
+struct ClientAckCreate {
+    QString clientId;
+    qint64 evidenceSize = 0;
+};
+
+struct ClientAckDto {
+    QString apiVersion;
+    QString deviceId;
+    QString clientId;
+    qint64 eventId = 0;
+    qint64 trackId = 0;
+    qint64 evidenceSize = 0;
+    qint64 persistedEpochMs = 0;
     QJsonObject rawJson;
 };
 

@@ -42,7 +42,10 @@ class QSplitter;
 class SystemSettingsService;
 class VideoWidget;
 class LivePreviewPanel;
-namespace rv1126b { class EvidenceCacheMaintenanceService; }
+namespace rv1126b {
+class EmbeddedFtpReceiveServer;
+class EvidenceCacheMaintenanceService;
+}
 
 struct MainWindowDependencies {
     rv1126b::DeviceDiscoveryService* discovery = nullptr;
@@ -58,6 +61,7 @@ struct MainWindowDependencies {
     rv1126b::BoardApiResolver boardApiForDevice;
     rv1126b::FtpServiceResolver ftpServiceForDevice;
     rv1126b::FtpTaskSnapshotResolver ftpTaskSnapshotForDevice;
+    rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer = nullptr;
     rv1126b::EvidenceCacheMaintenanceService* evidenceMaintenance = nullptr;
     QString evidenceRootPath;
     std::function<bool(const QString&)> switchEvidenceRoot;
@@ -203,6 +207,7 @@ private:
     rv1126b::DeviceOperationsController* operationsController_ = nullptr;
     rv1126b::EventViewController* eventController_ = nullptr;
     rv1126b::IRtspPlayer* rtspPlayer_ = nullptr;
+    rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
     std::function<rv1126b::EventSyncService*(const QString&)> eventSyncForDevice_;
     rv1126b::BoardApiResolver boardApiForDevice_;
     rv1126b::EvidenceCacheMaintenanceService* evidenceMaintenance_ = nullptr;

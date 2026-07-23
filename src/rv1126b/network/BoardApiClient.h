@@ -22,6 +22,8 @@ class BoardApiClient final : public IBoardApiClient
 public:
     static constexpr int JsonConnectTimeoutMs = 3000;
     static constexpr int JsonRequestTimeoutMs = 10000;
+    static constexpr int ConfigApplyFirstResponseTimeoutMs = 15000;
+    static constexpr int ConfigApplyRequestTimeoutMs = 25000;
     static constexpr int EvidenceRequestTimeoutMs = 30000;
 
     BoardApiClient(
@@ -42,10 +44,20 @@ public:
         const QString& partFilePath,
         QObject* context,
         ApiCompletion<EvidenceDownloadResult> completion) override;
+    RequestId putClientAck(
+        const EventIdentity& identity,
+        const ClientAckCreate& request,
+        QObject* context,
+        ApiCompletion<ClientAckDto> completion) override;
     RequestId getEvidenceConfig(QObject* context, ApiCompletion<EvidenceConfigDto> completion) override;
     RequestId putEvidenceConfig(const EvidenceConfigUpdate& update, QObject* context, ApiCompletion<EvidenceConfigDto> completion) override;
     RequestId getTime(QObject* context, ApiCompletion<TimeStatusDto> completion) override;
     RequestId putTime(const TimeUpdate& update, QObject* context, ApiCompletion<TimeStatusDto> completion) override;
+    RequestId getTriggerModeConfig(QObject* context, ApiCompletion<TriggerModeConfigDto> completion) override;
+    RequestId putTriggerModeConfig(const TriggerModeUpdate& update, QObject* context, ApiCompletion<TriggerModeConfigDto> completion) override;
+    RequestId getLineRegionConfig(QObject* context, ApiCompletion<LineRegionConfigDto> completion) override;
+    RequestId putLineRegionConfig(const LineRegionUpdate& update, QObject* context, ApiCompletion<LineRegionConfigDto> completion) override;
+    RequestId applyRuntimeConfig(const RuntimeApplyUpdate& update, QObject* context, ApiCompletion<RuntimeApplyDto> completion) override;
     RequestId getFtpConfig(QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
     RequestId putFtpConfig(const FtpConfigUpdate& update, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
     RequestId rollbackFtpConfig(const QString& expectedRevision, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
@@ -73,7 +85,9 @@ private:
         const QUrl& url,
         const QByteArray& body,
         QObject* context,
-        ApiCompletion<QByteArray> completion);
+        ApiCompletion<QByteArray> completion,
+        int firstResponseTimeoutMs = JsonConnectTimeoutMs,
+        int transferTimeoutMs = JsonRequestTimeoutMs);
     RequestId startEvidenceRequest(
         const QUrl& url,
         const QString& partFilePath,
@@ -111,7 +125,9 @@ private:
         const QByteArray& body,
         QObject* context,
         ApiCompletion<T> completion,
-        Parser parser)
+        Parser parser,
+        int firstResponseTimeoutMs = JsonConnectTimeoutMs,
+        int transferTimeoutMs = JsonRequestTimeoutMs)
     {
         return startJsonRequest(operation, url, body, context,
             [completion = std::move(completion), parser = std::move(parser)](ApiResult<QByteArray> result) mutable {
@@ -120,7 +136,9 @@ private:
                     return;
                 }
                 completion(parser(result.value()));
-            });
+            },
+            firstResponseTimeoutMs,
+            transferTimeoutMs);
     }
 
     template<typename T>

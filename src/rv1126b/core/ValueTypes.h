@@ -14,10 +14,12 @@ struct WireEnum {
 };
 
 enum class TimeQuality {
-    NativeUtc,
-    ConfiguredOffset,
-    BoardEpochUnverified,
-    Unknown
+    NativeUtc = 0,
+    ConfiguredOffset = 1,
+    BoardEpochUnverified = 2,
+    Unknown = 3,
+    AppApiSetCurrentBoot = 4,
+    RtcRestoredCurrentBoot = 5
 };
 
 struct NormalizedTime {
@@ -25,6 +27,7 @@ struct NormalizedTime {
     qint64 sourceEpochMs = 0;
     qint64 offsetAppliedMs = 0;
     WireEnum<TimeQuality> quality;
+    QString bootId;
 };
 
 struct EventIdentity {

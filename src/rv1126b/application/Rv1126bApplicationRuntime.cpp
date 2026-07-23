@@ -7,6 +7,7 @@
 #include "../security/WindowsCredentialStore.h"
 #include "../services/BoardDeviceFleetService.h"
 #include "../services/BoardEvidenceCache.h"
+#include "../services/EmbeddedFtpReceiveServer.h"
 #include "../services/EvidenceCacheMaintenanceService.h"
 #include "../storage/SqliteEventRepository.h"
 
@@ -76,6 +77,7 @@ Rv1126bApplicationRuntime::Rv1126bApplicationRuntime(
         [fleet = QPointer<BoardDeviceFleetService>(fleet_)](const QString& deviceId) {
             return fleet ? fleet->boardApiForDevice(deviceId) : nullptr;
         }, repository_, evidenceRootPath_, this);
+    ftpReceiveServer_ = new EmbeddedFtpReceiveServer(this);
     evidenceMaintenance_ = new EvidenceCacheMaintenanceService(evidenceRootPath_, this);
     player_ = new QtMultimediaRtspPlayer(this);
 }
@@ -148,6 +150,7 @@ MainWindowDependencies Rv1126bApplicationRuntime::mainWindowDependencies() const
     dependencies.ftpTaskSnapshotForDevice = [fleet](const QString& deviceId) {
         return fleet ? fleet->ftpSnapshotForDevice(deviceId) : nullptr;
     };
+    dependencies.ftpReceiveServer = ftpReceiveServer_;
     dependencies.eventSyncForDevice = [fleet](const QString& deviceId) {
         return fleet ? fleet->eventSyncForDevice(deviceId) : nullptr;
     };
@@ -178,6 +181,7 @@ void Rv1126bApplicationRuntime::shutdown()
     if (shutdown_) return;
     shutdown_ = true;
     if (evidenceCache_) evidenceCache_->cancelAll();
+    if (ftpReceiveServer_) ftpReceiveServer_->stop();
     if (directProbe_) directProbe_->cancelAll();
     if (fleet_) fleet_->shutdown();
     if (repository_) repository_->cancelAll();

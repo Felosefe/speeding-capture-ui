@@ -3,7 +3,6 @@
 
 #include <QDateTime>
 #include <QHostAddress>
-
 #include <limits>
 
 namespace rv1126b {
@@ -12,6 +11,21 @@ namespace {
 constexpr qint64 FirstSupportedEpochMs = 1577836800000LL; // 2020-01-01 UTC
 constexpr qint64 LastSupportedEpochMs = 4102444800000LL;  // 2100-01-01 UTC, exclusive
 constexpr qint64 MaxTaskSpanMs = 366LL * 24 * 60 * 60 * 1000;
+
+bool validFtpTargetId(const QString& value)
+{
+    if (value.isEmpty() || value.size() > 32) return false;
+    for (const QChar ch : value) {
+        const ushort u = ch.unicode();
+        const bool ok = (u >= 'A' && u <= 'Z')
+            || (u >= 'a' && u <= 'z')
+            || (u >= '0' && u <= '9')
+            || ch == QLatin1Char('_')
+            || ch == QLatin1Char('-');
+        if (!ok) return false;
+    }
+    return true;
+}
 
 QString operationMessage(const QString& fallback, const ApiError& error)
 {
@@ -23,6 +37,8 @@ QString operationMessage(const QString& fallback, const ApiError& error)
         return QStringLiteral("板端未开放 FTP 配置写入能力");
     if (error.code == QStringLiteral("ftp_task_write_disabled"))
         return QStringLiteral("板端未开放 FTP 历史任务能力");
+    if (error.code == QStringLiteral("time_not_verified"))
+        return QStringLiteral("板端时间尚未校验，请先执行校时后再创建历史 FTP 任务");
     if (error.code == QStringLiteral("config_revision_conflict"))
         return QStringLiteral("FTP 配置已被其他客户端修改，正在重新读取");
 
@@ -311,7 +327,7 @@ void DeviceOperationsController::loadFtpTask(const QString& taskId)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("读取 FTP 任务详情失败"));
-            if (ftpTaskSnapshot_) {
+            if (ftpTaskSnapshot_ && !result.value().targets.isEmpty()) {
                 ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
                     [this](ApiResult<StoredFtpTask> saved) {
                         if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
@@ -332,7 +348,7 @@ void DeviceOperationsController::createFtpTask(const FtpTaskCreate& request)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("创建 FTP 历史任务失败"));
-            if (ftpTaskSnapshot_) {
+            if (ftpTaskSnapshot_ && !result.value().targets.isEmpty()) {
                 ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
                     [this](ApiResult<StoredFtpTask> saved) {
                         if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
@@ -355,7 +371,7 @@ void DeviceOperationsController::retryFtpTask(const QString& taskId)
         [this, operation, generation](ApiResult<FtpTaskDetailDto> result) {
             if (!finishOperation(operation, generation)) return;
             if (!result) return reportError(result.error(), QStringLiteral("重试 FTP 历史任务失败"));
-            if (ftpTaskSnapshot_) {
+            if (ftpTaskSnapshot_ && !result.value().targets.isEmpty()) {
                 ftpTaskSnapshot_->saveTaskDetail(result.value(), this,
                     [this](ApiResult<StoredFtpTask> saved) {
                         if (!saved) reportError(saved.error(), QStringLiteral("保存 FTP 本地快照失败"));
@@ -485,7 +501,7 @@ std::optional<ApiError> DeviceOperationsController::validateFtpConfig(const FtpC
     QSet<QString> ids;
     for (const FtpTargetUpdate& target : update.targets) {
         const QString id = target.id.trimmed();
-        if (id.isEmpty() || ids.contains(id))
+        if (!validFtpTargetId(id) || ids.contains(id))
             return validationError(QStringLiteral("invalid_ftp_target_id"), QStringLiteral("FTP 目标 ID 不能为空或重复"));
         ids.insert(id);
         QHostAddress address;

@@ -1,11 +1,15 @@
 #include "Rv1126bDeviceManagementDialog.h"
 
+#include "../rv1126b/services/EmbeddedFtpReceiveServer.h"
+
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDateTimeEdit>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -16,12 +20,16 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QNetworkInterface>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QStandardPaths>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
 #include <QTimeZone>
+#include <QUuid>
 #include <QVBoxLayout>
 
 namespace {
@@ -33,6 +41,8 @@ QString timeQualityText(rv1126b::TimeQuality quality, const QString& raw)
     case TimeQuality::NativeUtc: return QStringLiteral("UTC 已验证");
     case TimeQuality::ConfiguredOffset: return QStringLiteral("已应用板端偏移");
     case TimeQuality::BoardEpochUnverified: return QStringLiteral("板端时间未校验（不可作为可靠 UTC）");
+    case TimeQuality::AppApiSetCurrentBoot: return QStringLiteral("应用本次启动已校时");
+    case TimeQuality::RtcRestoredCurrentBoot: return QStringLiteral("RTC 本次启动已恢复");
     case TimeQuality::Unknown: return QStringLiteral("未知：%1").arg(raw);
     }
     return QStringLiteral("未知");
@@ -73,10 +83,14 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     rv1126b::DeviceOperationsController* controller,
     InitialPage initialPage,
     QWidget* parent,
-    bool deviceOnline)
+    bool deviceOnline,
+    rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer,
+    const QString& localFtpRootPath)
     : QDialog(parent)
     , deviceId_(deviceId)
     , controller_(controller)
+    , ftpReceiveServer_(ftpReceiveServer)
+    , localFtpRootPath_(localFtpRootPath)
     , taskRefreshTimer_(new QTimer(this))
     , deviceOnline_(deviceOnline)
 {
@@ -242,6 +256,93 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     ftpRevisionLabel_->setObjectName(QStringLiteral("ftpRevisionLabel"));
     layout->addWidget(ftpRevisionLabel_);
 
+    auto* receiver = new QGroupBox(QStringLiteral("本机 FTP 接收服务"), page);
+    receiver->setObjectName(QStringLiteral("localFtpReceiverGroup"));
+    auto* receiverLayout = new QGridLayout(receiver);
+    localFtpRootEdit_ = new QLineEdit(receiver);
+    if (localFtpRootPath_.trimmed().isEmpty()) {
+        const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        localFtpRootEdit_->setText(QDir(documents.isEmpty() ? QDir::homePath() : documents)
+                                       .filePath(QStringLiteral("RV1126B_Events")));
+    } else {
+        localFtpRootEdit_->setText(localFtpRootPath_);
+    }
+    localFtpRootEdit_->setObjectName(QStringLiteral("localFtpRootEdit"));
+    auto* browse = new QPushButton(QStringLiteral("选择"), receiver);
+    connect(browse, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("选择接收目录"), localFtpRootEdit_->text());
+        if (!path.isEmpty()) localFtpRootEdit_->setText(path);
+    });
+    localFtpHostEdit_ = new QLineEdit(defaultLocalFtpAddress(), receiver);
+    localFtpHostEdit_->setObjectName(QStringLiteral("localFtpHostEdit"));
+    localFtpTargetIdEdit_ = new QLineEdit(defaultLocalFtpTargetId(localFtpHostEdit_->text()), receiver);
+    localFtpTargetIdEdit_->setObjectName(QStringLiteral("localFtpTargetIdEdit"));
+    connect(localFtpHostEdit_, &QLineEdit::textChanged,
+            this, &Rv1126bDeviceManagementDialog::syncLocalFtpTargetIdFromHost);
+    connect(localFtpTargetIdEdit_, &QLineEdit::textEdited, this, [this]() {
+        localFtpTargetIdAuto_ = false;
+    });
+    localFtpPortSpin_ = new QSpinBox(receiver);
+    localFtpPortSpin_->setRange(1, 65535);
+    localFtpPortSpin_->setValue(21210);
+    localFtpPortSpin_->setObjectName(QStringLiteral("localFtpPortSpin"));
+    localFtpPassiveStartSpin_ = new QSpinBox(receiver);
+    localFtpPassiveStartSpin_->setRange(0, 65535);
+    localFtpPassiveStartSpin_->setValue(21211);
+    localFtpPassiveStartSpin_->setObjectName(QStringLiteral("localFtpPassiveStartSpin"));
+    localFtpPassiveEndSpin_ = new QSpinBox(receiver);
+    localFtpPassiveEndSpin_->setRange(0, 65535);
+    localFtpPassiveEndSpin_->setValue(21230);
+    localFtpPassiveEndSpin_->setObjectName(QStringLiteral("localFtpPassiveEndSpin"));
+    localFtpUserEdit_ = new QLineEdit(QStringLiteral("upload"), receiver);
+    localFtpUserEdit_->setObjectName(QStringLiteral("localFtpUserEdit"));
+    localFtpPasswordEdit_ = new QLineEdit(QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-')).left(16), receiver);
+    localFtpPasswordEdit_->setObjectName(QStringLiteral("localFtpPasswordEdit"));
+    localFtpPasswordEdit_->setEchoMode(QLineEdit::Password);
+    localFtpStartButton_ = new QPushButton(QStringLiteral("启动接收服务"), receiver);
+    localFtpStartButton_->setObjectName(QStringLiteral("localFtpStartButton"));
+    localFtpStopButton_ = new QPushButton(QStringLiteral("停止"), receiver);
+    localFtpStopButton_->setObjectName(QStringLiteral("localFtpStopButton"));
+    auto* fillTarget = new QPushButton(QStringLiteral("填入本机目标"), receiver);
+    fillTarget->setObjectName(QStringLiteral("localFtpFillTargetButton"));
+    auto* saveTarget = new QPushButton(QStringLiteral("写入板端并启用新事件"), receiver);
+    saveTarget->setObjectName(QStringLiteral("localFtpSaveTargetButton"));
+    localFtpStatus_ = new QLabel(receiver);
+    localFtpStatus_->setObjectName(QStringLiteral("localFtpStatusLabel"));
+    localFtpStatus_->setWordWrap(true);
+    connect(localFtpStartButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::startLocalFtpReceiver);
+    connect(localFtpStopButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::stopLocalFtpReceiver);
+    connect(fillTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(false); });
+    connect(saveTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(true); });
+    receiverLayout->addWidget(new QLabel(QStringLiteral("保存目录"), receiver), 0, 0);
+    receiverLayout->addWidget(localFtpRootEdit_, 0, 1, 1, 4);
+    receiverLayout->addWidget(browse, 0, 5);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("本机 IP"), receiver), 1, 0);
+    receiverLayout->addWidget(localFtpHostEdit_, 1, 1);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("端口"), receiver), 1, 2);
+    receiverLayout->addWidget(localFtpPortSpin_, 1, 3);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("被动端口"), receiver), 1, 4);
+    auto* passiveRow = new QWidget(receiver);
+    auto* passiveLayout = new QHBoxLayout(passiveRow);
+    passiveLayout->setContentsMargins(0, 0, 0, 0);
+    passiveLayout->addWidget(localFtpPassiveStartSpin_);
+    passiveLayout->addWidget(new QLabel(QStringLiteral("-"), passiveRow));
+    passiveLayout->addWidget(localFtpPassiveEndSpin_);
+    receiverLayout->addWidget(passiveRow, 1, 5);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("用户"), receiver), 2, 0);
+    receiverLayout->addWidget(localFtpUserEdit_, 2, 1);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("密码"), receiver), 2, 2);
+    receiverLayout->addWidget(localFtpPasswordEdit_, 2, 3);
+    receiverLayout->addWidget(localFtpStartButton_, 2, 4);
+    receiverLayout->addWidget(localFtpStopButton_, 2, 5);
+    receiverLayout->addWidget(new QLabel(QStringLiteral("目标 ID"), receiver), 3, 0);
+    receiverLayout->addWidget(localFtpTargetIdEdit_, 3, 1);
+    receiverLayout->addWidget(fillTarget, 4, 0);
+    receiverLayout->addWidget(saveTarget, 4, 1);
+    receiverLayout->addWidget(localFtpStatus_, 4, 2, 1, 4);
+    layout->addWidget(receiver);
+    updateLocalFtpReceiverState();
+
     auto* globals = new QGroupBox(QStringLiteral("全局参数"), page);
     auto* grid = new QGridLayout(globals);
     const auto spin = [globals](int max = 86400) {
@@ -327,7 +428,6 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     });
     connect(saveFtpButton_, &QPushButton::clicked, this, [this]() {
         const rv1126b::FtpConfigUpdate update = collectFtpConfig();
-        clearPasswordEditors();
         controller_->saveFtpConfigAndEnableNewEvents(update);
     });
     connect(rollback, &QPushButton::clicked, this, [this]() {
@@ -471,6 +571,7 @@ void Rv1126bDeviceManagementDialog::connectController()
             this, [this](const rv1126b::FtpConfigSnapshotDto&) { ftpStatus_->setText(QStringLiteral("FTP 配置已回滚")); });
     connect(controller_, &rv1126b::DeviceOperationsController::ftpActivationFinished,
             this, [this](const rv1126b::FtpActivationResult& result) {
+                if (result.configSaved) clearPasswordEditors();
                 if (!result.configSaved) ftpStatus_->setText(QStringLiteral("FTP 配置未保存"));
                 else if (!result.autoEnabled) ftpStatus_->setText(QStringLiteral("FTP 配置已保存，但自动下发未开启；%1")
                     .arg(result.error ? result.error->code : QStringLiteral("请检查控制写能力")));
@@ -504,7 +605,7 @@ void Rv1126bDeviceManagementDialog::connectController()
             });
     connect(controller_, &rv1126b::DeviceOperationsController::ftpTaskRetried,
             this, [this](const rv1126b::FtpTaskDetailDto& task) {
-                applyTaskDetail(task);
+                if (!task.targets.isEmpty()) applyTaskDetail(task);
                 controller_->listFtpTasks(taskPageCursors_.at(taskPageIndex_).isEmpty()
                                               ? std::nullopt
                                               : std::optional<QString>(taskPageCursors_.at(taskPageIndex_)));
@@ -861,6 +962,180 @@ void Rv1126bDeviceManagementDialog::updateTaskRefreshState()
         if (!taskRefreshTimer_->isActive()) taskRefreshTimer_->start();
     } else {
         taskRefreshTimer_->stop();
+    }
+}
+
+void Rv1126bDeviceManagementDialog::startLocalFtpReceiver()
+{
+    if (!ftpReceiveServer_) {
+        if (localFtpStatus_) localFtpStatus_->setText(QStringLiteral("当前应用运行时未装配内置 FTP 接收服务"));
+        return;
+    }
+    QHostAddress host;
+    if (!host.setAddress(localFtpHostEdit_->text().trimmed())
+        || host.protocol() != QAbstractSocket::IPv4Protocol) {
+        localFtpStatus_->setText(QStringLiteral("本机 IP 必须是有效 IPv4 地址"));
+        return;
+    }
+    if (localFtpPassiveStartSpin_->value() > localFtpPassiveEndSpin_->value()) {
+        localFtpStatus_->setText(QStringLiteral("被动端口范围无效"));
+        return;
+    }
+
+    rv1126b::EmbeddedFtpReceiveServerConfig config;
+    config.rootPath = localFtpRootEdit_->text().trimmed();
+    config.userName = localFtpUserEdit_->text().trimmed();
+    config.password = localFtpPasswordEdit_->text();
+    config.listenAddress = QHostAddress::AnyIPv4;
+    config.advertisedAddress = host;
+    config.controlPort = static_cast<quint16>(localFtpPortSpin_->value());
+    config.passivePortStart = static_cast<quint16>(localFtpPassiveStartSpin_->value());
+    config.passivePortEnd = static_cast<quint16>(localFtpPassiveEndSpin_->value());
+    if (!ftpReceiveServer_->start(config)) {
+        localFtpStatus_->setText(QStringLiteral("接收服务启动失败：%1").arg(ftpReceiveServer_->lastError()));
+        updateLocalFtpReceiverState();
+        return;
+    }
+    localFtpStatus_->setText(QStringLiteral("接收服务已启动：%1:%2，目录 %3")
+                                 .arg(host.toString())
+                                 .arg(ftpReceiveServer_->controlPort())
+                                 .arg(config.rootPath));
+    updateLocalFtpReceiverState();
+}
+
+void Rv1126bDeviceManagementDialog::stopLocalFtpReceiver()
+{
+    if (ftpReceiveServer_) ftpReceiveServer_->stop();
+    if (localFtpStatus_) localFtpStatus_->setText(QStringLiteral("接收服务已停止"));
+    updateLocalFtpReceiverState();
+}
+
+void Rv1126bDeviceManagementDialog::applyLocalFtpTarget(bool saveAndEnable)
+{
+    if (!ftpReceiveServer_ || !ftpReceiveServer_->isListening()) {
+        startLocalFtpReceiver();
+    }
+    if (!ftpReceiveServer_ || !ftpReceiveServer_->isListening()) return;
+    writeLocalFtpTargetRow();
+    if (!validateFtpRowsInline()) return;
+    if (!saveAndEnable) {
+        const QString targetId = localFtpTargetIdEdit_
+            ? localFtpTargetIdEdit_->text().trimmed()
+            : QStringLiteral("local_pc");
+        localFtpStatus_->setText(QStringLiteral("已填入本机目标 %1，可手动保存或创建历史任务").arg(targetId));
+        return;
+    }
+    if (!controller_) return;
+    const rv1126b::FtpConfigUpdate update = collectFtpConfig();
+    controller_->saveFtpConfigAndEnableNewEvents(update);
+}
+
+void Rv1126bDeviceManagementDialog::updateLocalFtpReceiverState()
+{
+    const bool available = ftpReceiveServer_ != nullptr;
+    const bool running = available && ftpReceiveServer_->isListening();
+    if (localFtpStartButton_) localFtpStartButton_->setEnabled(available && !running);
+    if (localFtpStopButton_) localFtpStopButton_->setEnabled(running);
+    if (!localFtpStatus_) return;
+    if (!available) {
+        localFtpStatus_->setText(QStringLiteral("当前应用运行时未装配内置 FTP 接收服务"));
+    } else if (running) {
+        const auto config = ftpReceiveServer_->config();
+        localFtpStatus_->setText(QStringLiteral("接收服务运行中：%1:%2 -> %3")
+                                     .arg(config.advertisedAddress.toString())
+                                     .arg(ftpReceiveServer_->controlPort())
+                                     .arg(config.rootPath));
+    } else if (localFtpStatus_->text().isEmpty()) {
+        localFtpStatus_->setText(QStringLiteral("启动后可一键写入板端 FTP 目标，客户无需另开 FTP 工具"));
+    }
+}
+
+QString Rv1126bDeviceManagementDialog::defaultLocalFtpAddress() const
+{
+    QString fallback;
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    for (const QNetworkInterface& iface : interfaces) {
+        if (!(iface.flags() & QNetworkInterface::IsUp)
+            || !(iface.flags() & QNetworkInterface::IsRunning)
+            || (iface.flags() & QNetworkInterface::IsLoopBack)) {
+            continue;
+        }
+        for (const QNetworkAddressEntry& entry : iface.addressEntries()) {
+            const QHostAddress address = entry.ip();
+            if (address.protocol() != QAbstractSocket::IPv4Protocol) continue;
+            const QString text = address.toString();
+            if (text.startsWith(QStringLiteral("192.168.137."))) return text;
+            if (fallback.isEmpty()) fallback = text;
+        }
+    }
+    return fallback.isEmpty() ? QStringLiteral("192.168.137.1") : fallback;
+}
+
+QString Rv1126bDeviceManagementDialog::defaultLocalFtpTargetId(const QString& host) const
+{
+    QString suffix = host.trimmed();
+    suffix.replace(QRegularExpression(QStringLiteral(R"([^A-Za-z0-9]+)")), QStringLiteral("_"));
+    suffix.replace(QRegularExpression(QStringLiteral(R"(^_+|_+$)")), QString());
+    return QStringLiteral("pc_%1").arg(suffix.isEmpty() ? QStringLiteral("local") : suffix);
+}
+
+void Rv1126bDeviceManagementDialog::syncLocalFtpTargetIdFromHost()
+{
+    if (!localFtpTargetIdAuto_ || !localFtpTargetIdEdit_) return;
+    localFtpTargetIdEdit_->setText(defaultLocalFtpTargetId(localFtpHostEdit_->text()));
+}
+
+int Rv1126bDeviceManagementDialog::localFtpTargetRow() const
+{
+    if (!ftpTargetsTable_) return -1;
+    const QString targetId = localFtpTargetIdEdit_
+        ? localFtpTargetIdEdit_->text().trimmed()
+        : QStringLiteral("local_pc");
+    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row) {
+        auto* id = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1));
+        if (id && id->text().trimmed() == targetId) return row;
+    }
+    return -1;
+}
+
+void Rv1126bDeviceManagementDialog::writeLocalFtpTargetRow()
+{
+    const QString targetId = localFtpTargetIdEdit_
+        ? localFtpTargetIdEdit_->text().trimmed()
+        : QStringLiteral("local_pc");
+    if (targetId.isEmpty()) {
+        showError(QStringLiteral("invalid_ftp_target_id"), QStringLiteral("FTP 目标 ID 不能为空"));
+        return;
+    }
+    if (targetId.size() > 32
+        || !QRegularExpression(QStringLiteral(R"(^[A-Za-z0-9_-]+$)")).match(targetId).hasMatch()) {
+        showError(QStringLiteral("invalid_ftp_target_id"),
+                  QStringLiteral("FTP 目标 ID 只能包含 1..32 位字母、数字、下划线和横线"));
+        return;
+    }
+    int row = localFtpTargetRow();
+    if (row < 0) {
+        if (ftpTargetsTable_->rowCount() >= rv1126b::DeviceOperationsController::MaxFtpTargets) {
+            showError(QStringLiteral("too_many_ftp_targets"), QStringLiteral("FTP 目标最大 8 个，请先删除一个目标"));
+            return;
+        }
+        addFtpTargetRow();
+        row = ftpTargetsTable_->rowCount() - 1;
+    }
+    qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 0))->setChecked(true);
+    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1))->setText(targetId);
+    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 2))->setText(localFtpHostEdit_->text().trimmed());
+    qobject_cast<QSpinBox*>(ftpTargetsTable_->cellWidget(row, 3))->setValue(localFtpPortSpin_->value());
+    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 4))->setText(localFtpUserEdit_->text().trimmed());
+    auto* action = qobject_cast<QComboBox*>(ftpTargetsTable_->cellWidget(row, 5));
+    action->setCurrentIndex(action->findData(static_cast<int>(rv1126b::FtpPasswordAction::Replace)));
+    auto* password = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 6));
+    password->setEnabled(true);
+    password->setText(localFtpPasswordEdit_->text());
+    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 7))->setText(QStringLiteral("/vehicle_events"));
+    qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 8))->setChecked(true);
+    if (auto* configured = qobject_cast<QLabel*>(ftpTargetsTable_->cellWidget(row, 9))) {
+        configured->setText(QStringLiteral("将替换"));
     }
 }
 

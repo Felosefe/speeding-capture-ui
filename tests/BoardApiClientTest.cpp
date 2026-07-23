@@ -149,6 +149,7 @@ private slots:
     void errorResponsesUseStableCategories_data();
     void errorResponsesUseStableCategories();
     void evidenceWritesPartFile();
+    void clientAckPutsExpectedPayload();
     void evidenceRejectsMismatchedContentLength();
     void unsafeEvidenceUrlIsRejectedBeforeNetworkRequest();
     void cancellationCompletesExactlyOnce();
@@ -263,6 +264,34 @@ void BoardApiClientTest::evidenceWritesPartFile()
     QFile file(partPath);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), QByteArray::fromHex("ffd8ffd9"));
+}
+
+void BoardApiClientTest::clientAckPutsExpectedPayload()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.body = QByteArrayLiteral(R"({
+        "api_version":"v1",
+        "ack":{"schema_version":1,"device_id":"rv1126b_001","client_id":"qt_primary","event_id":1,"track_id":2,"evidence_size":4096,"persisted_epoch_ms":1784002847389}
+    })");
+    TestSecretStore secretStore(QByteArrayLiteral("test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secretStore, &codec);
+    std::optional<ApiResult<ClientAckDto>> result;
+    EventIdentity identity { QStringLiteral("rv1126b_001"), 1, 2 };
+    ClientAckCreate request;
+    request.clientId = QStringLiteral("qt_primary");
+    request.evidenceSize = 4096;
+
+    client.putClientAck(identity, request, this,
+        [&result](ApiResult<ClientAckDto> value) { result = std::move(value); });
+
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(result->isSuccess());
+    QCOMPARE(result->value().clientId, QStringLiteral("qt_primary"));
+    QVERIFY(server.lastRequest.startsWith("PUT /api/v1/events/1/2/ack HTTP/1.1\r\n"));
+    QVERIFY(server.lastRequest.contains("\"client_id\":\"qt_primary\""));
+    QVERIFY(server.lastRequest.contains("\"evidence_size\":4096"));
 }
 
 void BoardApiClientTest::evidenceRejectsMismatchedContentLength()

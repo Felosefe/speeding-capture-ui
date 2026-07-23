@@ -8,6 +8,7 @@
 #include <QString>
 
 #include <optional>
+#include <utility>
 
 namespace rv1126b {
 
@@ -37,6 +38,24 @@ public:
         const QString& partFilePath,
         QObject* context,
         ApiCompletion<EvidenceDownloadResult> completion) = 0;
+    virtual RequestId putClientAck(
+        const EventIdentity& identity,
+        const ClientAckCreate& request,
+        QObject* context,
+        ApiCompletion<ClientAckDto> completion)
+    {
+        Q_UNUSED(identity)
+        Q_UNUSED(request)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("client_ack_unsupported");
+        error.message = QStringLiteral("Client acknowledgement is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) {
+            completion(ApiResult<ClientAckDto>::failure(std::move(error)));
+        }
+        return RequestId::createUuid();
+    }
 
     virtual RequestId getEvidenceConfig(QObject* context, ApiCompletion<EvidenceConfigDto> completion) = 0;
     virtual RequestId putEvidenceConfig(
@@ -48,6 +67,73 @@ public:
         const TimeUpdate& update,
         QObject* context,
         ApiCompletion<TimeStatusDto> completion) = 0;
+
+    virtual RequestId getTriggerModeConfig(QObject* context, ApiCompletion<TriggerModeConfigDto> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("trigger_mode_config_unsupported");
+        error.message = QStringLiteral("Trigger mode configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<TriggerModeConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId putTriggerModeConfig(
+        const TriggerModeUpdate& update,
+        QObject* context,
+        ApiCompletion<TriggerModeConfigDto> completion)
+    {
+        Q_UNUSED(update)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("trigger_mode_config_unsupported");
+        error.message = QStringLiteral("Trigger mode configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<TriggerModeConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId getLineRegionConfig(QObject* context, ApiCompletion<LineRegionConfigDto> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("line_region_config_unsupported");
+        error.message = QStringLiteral("Line-region configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<LineRegionConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId putLineRegionConfig(
+        const LineRegionUpdate& update,
+        QObject* context,
+        ApiCompletion<LineRegionConfigDto> completion)
+    {
+        Q_UNUSED(update)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("line_region_config_unsupported");
+        error.message = QStringLiteral("Line-region configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<LineRegionConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId applyRuntimeConfig(
+        const RuntimeApplyUpdate& update,
+        QObject* context,
+        ApiCompletion<RuntimeApplyDto> completion)
+    {
+        Q_UNUSED(update)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("runtime_apply_unsupported");
+        error.message = QStringLiteral("Runtime configuration apply is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<RuntimeApplyDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
 
     virtual RequestId getFtpConfig(QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) = 0;
     virtual RequestId putFtpConfig(

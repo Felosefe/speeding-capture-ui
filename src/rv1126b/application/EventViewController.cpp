@@ -30,6 +30,10 @@ QString timeQualityText(TimeQuality quality)
         return QStringLiteral("configured_offset");
     case TimeQuality::BoardEpochUnverified:
         return QStringLiteral("board_epoch_unverified");
+    case TimeQuality::AppApiSetCurrentBoot:
+        return QStringLiteral("app_api_set_current_boot");
+    case TimeQuality::RtcRestoredCurrentBoot:
+        return QStringLiteral("rtc_restored_current_boot");
     case TimeQuality::Unknown:
     default:
         return QStringLiteral("unknown");
@@ -97,7 +101,8 @@ void EventViewController::attachSyncService(EventSyncService* service)
     connect(service, &EventSyncService::eventChanged,
             this, &EventViewController::handleEventChanged);
     connect(service, &EventSyncService::initialCatchUpFinished, this,
-            [this](const QString&) {
+            [this](const QString& healthyDeviceId) {
+                emit syncHealthy(healthyDeviceId);
                 if (!paused_) {
                     realtimeMode_ ? refreshRealtime(currentQuery_.deviceId.value_or(QString()),
                                                     !currentQuery_.deviceId.has_value(),
@@ -500,6 +505,7 @@ void EventViewController::loadChangedEvent(const EventIdentity& identity)
             }
             if (!result.value().has_value()) return;
             const VehicleEvent event = *result.value();
+            emit syncHealthy(event.identity.deviceId);
             if (event.evidenceAvailable && dependencies_.evidenceCache) {
                 dependencies_.evidenceCache->enqueue(event);
             }
@@ -534,9 +540,14 @@ void EventViewController::reportError(const ApiError& error, const QString& fall
 {
     QString message = fallback;
     if (error.category == ApiErrorCategory::Network || error.category == ApiErrorCategory::Temporary)
-        message = QStringLiteral("设备网络暂时不可用，本地历史仍可查看");
+        message = QStringLiteral("%1：设备网络暂时不可用，本地历史仍可查看").arg(fallback);
     else if (error.category == ApiErrorCategory::Cancelled)
         message = QStringLiteral("操作已取消");
+    else if (!error.message.isEmpty())
+        message = QStringLiteral("%1：%2").arg(fallback, error.message);
+    if (!error.code.isEmpty() && !message.contains(error.code)) {
+        message = QStringLiteral("%1（%2）").arg(message, error.code);
+    }
     emit userError(error.code.isEmpty() ? QStringLiteral("event_operation_failed") : error.code,
                    message);
 }

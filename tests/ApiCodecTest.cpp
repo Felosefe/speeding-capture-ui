@@ -15,6 +15,7 @@ class ApiCodecTest final : public QObject
 private slots:
     void parsesDiscoveryAndRejectsMismatchedNonce();
     void parsesHealthAndEventPageFixtures();
+    void parsesLatestEventUrlsCaptureAndTimeQuality();
     void rejectsMalformedKnownField();
     void parsesEventDetailAndConfigurationResponses();
     void parsesFtpTaskDetailFixture();
@@ -90,6 +91,54 @@ void ApiCodecTest::parsesHealthAndEventPageFixtures()
     QCOMPARE(page.value().items.first().ocrStatus.value, OcrStatus::Unknown);
     QCOMPARE(page.value().items.first().ocrStatus.rawValue, QStringLiteral("future_ocr_state"));
     QVERIFY(!page.value().nextCursor.has_value());
+}
+
+void ApiCodecTest::parsesLatestEventUrlsCaptureAndTimeQuality()
+{
+    BoardApiCodec codec;
+    const QByteArray payload = R"({
+        "api_version":"v1",
+        "items":[{
+            "event_id":132,
+            "track_id":1995,
+            "event_time":{
+                "epoch_ms":1784002847389,
+                "source_epoch_ms":1784002847389,
+                "offset_applied_ms":0,
+                "quality":"rtc_restored_current_boot",
+                "boot_id":"boot-123"
+            },
+            "motion_direction":"northbound",
+            "speed_kmh":"0.0",
+            "speed_valid":false,
+            "speed_status":"no_data",
+            "capture_status":"failed",
+            "capture_error":"snapshot_timeout",
+            "ocr_status":"failed",
+            "plate_text":"",
+            "plate_ascii":"",
+            "plate_color":"",
+            "evidence_status":"not_generated",
+            "evidence_available":false,
+            "detail_url":"/api/v1/events/132/1995",
+            "evidence_url":null
+        }],
+        "count":1,
+        "has_more":false,
+        "next_cursor":null
+    })";
+
+    const auto page = codec.parseEventPage(payload);
+    QVERIFY(page.isSuccess());
+    const EventSummaryDto summary = page.value().items.first();
+    QCOMPARE(summary.detailRelativeUrl, QStringLiteral("/api/v1/events/132/1995"));
+    QCOMPARE(summary.evidenceRelativeUrl, QString());
+    QCOMPARE(summary.captureStatus, QStringLiteral("failed"));
+    QCOMPARE(summary.captureError, QStringLiteral("snapshot_timeout"));
+    QCOMPARE(summary.speedKmh, 0);
+    QVERIFY(!summary.speedValid);
+    QCOMPARE(summary.eventTime.quality.value, TimeQuality::RtcRestoredCurrentBoot);
+    QCOMPARE(summary.eventTime.bootId, QStringLiteral("boot-123"));
 }
 
 void ApiCodecTest::rejectsMalformedKnownField()
@@ -173,6 +222,16 @@ void ApiCodecTest::parsesFtpConfigControlAndPageResponses()
     QVERIFY(control.isSuccess());
     QCOMPARE(control.value().scope.value, FtpControlScope::NewEventsOnly);
 
+    const auto liveControl = codec.parseFtpControl(QByteArrayLiteral(
+        "{\"api_version\":\"v1\",\"revision\":\"v1-live\",\"enabled\":true,"
+        "\"min_event_epoch_ms\":1784549240147,\"write_enabled\":true,"
+        "\"restart_required\":false,\"apply_mode\":\"uploader_hot_reload\"}"));
+    QVERIFY(liveControl.isSuccess());
+    QCOMPARE(liveControl.value().scope.value, FtpControlScope::NewEventsOnly);
+    QCOMPARE(liveControl.value().minEventEpochMs, 1784549240147LL);
+    QVERIFY(liveControl.value().writeEnabled);
+    QCOMPARE(liveControl.value().applyMode, QStringLiteral("uploader_hot_reload"));
+
     QJsonObject task = jsonObject(fixture(QStringLiteral("ftp_task_detail.json")));
     task.remove(QStringLiteral("targets"));
     task.insert(QStringLiteral("api_version"), QStringLiteral("v1"));
@@ -185,6 +244,25 @@ void ApiCodecTest::parsesFtpConfigControlAndPageResponses()
     const auto taskPage = codec.parseFtpTaskPage(QJsonDocument(page).toJson(QJsonDocument::Compact));
     QVERIFY(taskPage.isSuccess());
     QCOMPARE(taskPage.value().items.first().state.value, FtpTaskState::Running);
+
+    const auto emptyTaskPage = codec.parseFtpTaskPage(QByteArrayLiteral(
+        "{\"api_version\":\"v1\",\"items\":[],\"has_more\":false,\"next_cursor\":null}"));
+    QVERIFY(emptyTaskPage.isSuccess());
+    QCOMPARE(emptyTaskPage.value().count, 0);
+
+    QJsonObject wrapped;
+    QJsonObject detailTask = jsonObject(fixture(QStringLiteral("ftp_task_detail.json")));
+    wrapped.insert(QStringLiteral("api_version"), QStringLiteral("v1"));
+    wrapped.insert(QStringLiteral("task"), detailTask);
+    const auto wrappedDetail = codec.parseFtpTaskDetail(QJsonDocument(wrapped).toJson(QJsonDocument::Compact));
+    QVERIFY(wrappedDetail.isSuccess());
+    QCOMPARE(wrappedDetail.value().summary.taskId, QStringLiteral("ftp_task_001"));
+
+    const auto retry = codec.parseFtpTaskDetail(QByteArrayLiteral(
+        "{\"api_version\":\"v1\",\"task_id\":\"ftp_task_001\",\"retry_queued\":2}"));
+    QVERIFY(retry.isSuccess());
+    QCOMPARE(retry.value().summary.taskId, QStringLiteral("ftp_task_001"));
+    QCOMPARE(retry.value().retryQueued, 2LL);
 }
 
 void ApiCodecTest::classifiesBoardErrors()
@@ -275,6 +353,20 @@ void ApiCodecTest::encodesFtpRequestsAndRejectsInvalidValues()
     const QJsonObject configObject = jsonObject(encodedConfig.value());
     QCOMPARE(configObject.value(QStringLiteral("targets")).toArray().size(), 1);
     QVERIFY(!configObject.contains(QStringLiteral("password")));
+    QCOMPARE(configObject.value(QStringLiteral("targets")).toArray().first().toObject()
+                 .value(QStringLiteral("password_action")).toString(),
+             QStringLiteral("keep"));
+
+    config.targets[0].passwordAction.value = FtpPasswordAction::Replace;
+    config.targets[0].passwordAction.rawValue.clear();
+    config.targets[0].replacementPassword = QStringLiteral("secret");
+    const auto encodedReplaceConfig = codec.encodeFtpConfig(config);
+    QVERIFY(encodedReplaceConfig.isSuccess());
+    const QJsonObject replaceTarget = jsonObject(encodedReplaceConfig.value())
+                                          .value(QStringLiteral("targets")).toArray().first().toObject();
+    QCOMPARE(replaceTarget.value(QStringLiteral("password_action")).toString(),
+             QStringLiteral("replace"));
+    QCOMPARE(replaceTarget.value(QStringLiteral("password")).toString(), QStringLiteral("secret"));
 
     FtpControlUpdate control;
     control.expectedRevision = QStringLiteral("v1-revision");
@@ -293,6 +385,22 @@ void ApiCodecTest::encodesFtpRequestsAndRejectsInvalidValues()
     const auto invalidTask = codec.encodeFtpTaskCreate(task);
     QVERIFY(!invalidTask.isSuccess());
     QCOMPARE(invalidTask.error().code, QStringLiteral("invalid_ftp_task"));
+
+    ClientAckCreate ack;
+    ack.clientId = QStringLiteral("qt_primary");
+    ack.evidenceSize = 4096;
+    const auto encodedAck = codec.encodeClientAck(ack);
+    QVERIFY(encodedAck.isSuccess());
+    QCOMPARE(jsonObject(encodedAck.value()).value(QStringLiteral("client_id")).toString(), ack.clientId);
+    QCOMPARE(jsonObject(encodedAck.value()).value(QStringLiteral("evidence_size")).toInteger(), ack.evidenceSize);
+
+    const auto parsedAck = codec.parseClientAck(QByteArrayLiteral(R"({
+        "api_version":"v1",
+        "ack":{"schema_version":1,"device_id":"rv1126b_001","client_id":"qt_primary","event_id":1,"track_id":2,"evidence_size":4096,"persisted_epoch_ms":1784002847389}
+    })"));
+    QVERIFY(parsedAck.isSuccess());
+    QCOMPARE(parsedAck.value().clientId, QStringLiteral("qt_primary"));
+    QCOMPARE(parsedAck.value().trackId, 2LL);
 }
 
 QTEST_MAIN(ApiCodecTest)

@@ -13,6 +13,7 @@ namespace rv1126b {
 class BoardApiCodec;
 class BoardDeviceFleetService;
 class BoardEvidenceCache;
+class EmbeddedFtpReceiveServer;
 class EvidenceCacheMaintenanceService;
 class DirectDeviceProbeService;
 class QtMultimediaRtspPlayer;
@@ -53,6 +54,7 @@ private:
     SqliteEventRepository* repository_ = nullptr;
     BoardDeviceFleetService* fleet_ = nullptr;
     BoardEvidenceCache* evidenceCache_ = nullptr;
+    EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
     EvidenceCacheMaintenanceService* evidenceMaintenance_ = nullptr;
     QtMultimediaRtspPlayer* player_ = nullptr;
     QString databasePath_;

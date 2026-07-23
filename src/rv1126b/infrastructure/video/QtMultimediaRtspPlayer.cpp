@@ -99,6 +99,9 @@ void QtMultimediaRtspPlayer::handleFrame(quint64 attemptToken,
 
     lastFrameElapsed_.restart();
     emit frameReceived();
+    if (frameSize.isValid()) {
+        emit videoFrameReceived(frameSize);
+    }
 
     if (!firstFramePending_) {
         return;

@@ -71,6 +71,8 @@ struct VehicleEvent {
     QString plateColor;
     QString evidenceStatus;
     bool evidenceAvailable = false;
+    QString captureStatus;
+    QString captureError;
     QString detailRelativeUrl;
     QString evidenceRelativeUrl;
     qint64 firstSeenEpochMs = 0;
@@ -86,6 +88,7 @@ struct EventDetailSnapshot {
     QJsonObject radar;
     QJsonObject ocr;
     QJsonObject images;
+    QJsonObject captureTiming;
     QJsonObject rawJson;
     qint64 fetchedEpochMs = 0;
 };

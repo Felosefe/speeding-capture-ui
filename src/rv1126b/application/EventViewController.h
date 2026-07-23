@@ -55,6 +55,7 @@ signals:
     void deleteFinished(int deletedCount, int failedCount);
     void exportFinished(const QString& filePath, int rowCount);
     void userError(const QString& code, const QString& message);
+    void syncHealthy(const QString& deviceId);
 
 private:
     void handleEventChanged(const EventIdentity& identity);

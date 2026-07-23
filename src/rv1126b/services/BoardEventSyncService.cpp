@@ -60,6 +60,8 @@ VehicleEvent eventFromSummary(
     event.plateColor = summary.plateColor;
     event.evidenceStatus = summary.evidenceStatus;
     event.evidenceAvailable = summary.evidenceAvailable;
+    event.captureStatus = summary.captureStatus;
+    event.captureError = summary.captureError;
     event.detailRelativeUrl = summary.detailRelativeUrl;
     event.evidenceRelativeUrl = summary.evidenceRelativeUrl;
     event.firstSeenEpochMs = observedEpochMs;
@@ -87,6 +89,7 @@ EventDetailSnapshot detailFromDto(
     detail.radar = dto.radar;
     detail.ocr = dto.ocr;
     detail.images = dto.images;
+    detail.captureTiming = dto.captureTiming;
     detail.rawJson = dto.rawJson;
     detail.fetchedEpochMs = fetchedEpochMs;
     return detail;

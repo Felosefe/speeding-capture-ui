@@ -19,6 +19,21 @@ constexpr qint64 MaxSupportedEpochMs = 4102444799999LL;
 constexpr qint64 MaxTaskSpanMs = 366LL * 24LL * 60LL * 60LL * 1000LL;
 constexpr auto ApiVersion = "v1";
 
+bool validFtpTargetId(const QString& value)
+{
+    if (value.isEmpty() || value.size() > 32) return false;
+    for (const QChar ch : value) {
+        const ushort u = ch.unicode();
+        const bool ok = (u >= 'A' && u <= 'Z')
+            || (u >= 'a' && u <= 'z')
+            || (u >= '0' && u <= '9')
+            || ch == QLatin1Char('_')
+            || ch == QLatin1Char('-');
+        if (!ok) return false;
+    }
+    return true;
+}
+
 ApiError protocolError(const QString& code, const QString& message)
 {
     ApiError error;
@@ -64,6 +79,21 @@ ApiResult<QString> requiredString(const QJsonObject& object, const char* key)
     return ApiResult<QString>::success(value.toString());
 }
 
+ApiResult<QString> optionalString(
+    const QJsonObject& object,
+    const char* key,
+    const QString& fallback = QString())
+{
+    const QJsonValue value = object.value(QLatin1String(key));
+    if (value.isUndefined() || value.isNull()) {
+        return ApiResult<QString>::success(fallback);
+    }
+    if (!value.isString()) {
+        return failure<QString>(QStringLiteral("invalid_field"), QStringLiteral("Expected string or null field: %1").arg(QLatin1String(key)));
+    }
+    return ApiResult<QString>::success(value.toString());
+}
+
 ApiResult<bool> requiredBool(const QJsonObject& object, const char* key)
 {
     const QJsonValue value = object.value(QLatin1String(key));
@@ -87,6 +117,58 @@ ApiResult<qint64> requiredInteger(const QJsonObject& object, const char* key)
         return failure<qint64>(QStringLiteral("invalid_field"), QStringLiteral("Expected integer field: %1").arg(QLatin1String(key)));
     }
     return ApiResult<qint64>::success(static_cast<qint64>(number));
+}
+
+ApiResult<qint64> optionalInteger(
+    const QJsonObject& object,
+    const char* key,
+    qint64 fallback = 0)
+{
+    const QJsonValue value = object.value(QLatin1String(key));
+    if (value.isUndefined() || value.isNull()) {
+        return ApiResult<qint64>::success(fallback);
+    }
+    return requiredInteger(object, key);
+}
+
+ApiResult<bool> optionalBool(
+    const QJsonObject& object,
+    const char* key,
+    bool fallback = false)
+{
+    const QJsonValue value = object.value(QLatin1String(key));
+    if (value.isUndefined() || value.isNull()) {
+        return ApiResult<bool>::success(fallback);
+    }
+    if (!value.isBool()) {
+        return failure<bool>(QStringLiteral("invalid_field"), QStringLiteral("Expected boolean or null field: %1").arg(QLatin1String(key)));
+    }
+    return ApiResult<bool>::success(value.toBool());
+}
+
+ApiResult<int> speedKmhField(const QJsonObject& object)
+{
+    const QJsonValue value = object.value(QStringLiteral("speed_kmh"));
+    bool ok = false;
+    double number = 0.0;
+    if (value.isDouble()) {
+        number = value.toDouble();
+        ok = true;
+    } else if (value.isString()) {
+        number = value.toString().trimmed().toDouble(&ok);
+    } else if (value.isUndefined() || value.isNull()) {
+        const QJsonValue speedValid = object.value(QStringLiteral("speed_valid"));
+        if (speedValid.isBool() && !speedValid.toBool()) {
+            return ApiResult<int>::success(0);
+        }
+    }
+
+    if (!ok || !std::isfinite(number)
+        || number < static_cast<double>(std::numeric_limits<int>::min())
+        || number > static_cast<double>(std::numeric_limits<int>::max())) {
+        return failure<int>(QStringLiteral("invalid_field"), QStringLiteral("Expected numeric field: speed_kmh"));
+    }
+    return ApiResult<int>::success(static_cast<int>(std::lround(number)));
 }
 
 ApiResult<QJsonObject> requiredObject(const QJsonObject& object, const char* key)
@@ -130,6 +212,20 @@ bool requireApiVersion(const QJsonObject& object, QString* version, ApiError* er
     return true;
 }
 
+bool assignCompatibleUrl(
+    const QJsonObject& object,
+    const char* oldKey,
+    const char* newKey,
+    QString* target,
+    ApiError* error)
+{
+    const QJsonValue oldValue = object.value(QLatin1String(oldKey));
+    if (!oldValue.isUndefined()) {
+        return assign(optionalString(object, oldKey), target, error);
+    }
+    return assign(optionalString(object, newKey), target, error);
+}
+
 WireEnum<TimeQuality> timeQualityFromWire(const QString& raw)
 {
     WireEnum<TimeQuality> value;
@@ -140,6 +236,10 @@ WireEnum<TimeQuality> timeQualityFromWire(const QString& raw)
         value.value = TimeQuality::ConfiguredOffset;
     } else if (raw == QStringLiteral("board_epoch_unverified")) {
         value.value = TimeQuality::BoardEpochUnverified;
+    } else if (raw == QStringLiteral("app_api_set_current_boot")) {
+        value.value = TimeQuality::AppApiSetCurrentBoot;
+    } else if (raw == QStringLiteral("rtc_restored_current_boot")) {
+        value.value = TimeQuality::RtcRestoredCurrentBoot;
     }
     return value;
 }
@@ -167,6 +267,17 @@ WireEnum<FtpPasswordAction> passwordActionFromWire(const QString& raw)
     else if (raw == QStringLiteral("replace")) value.value = FtpPasswordAction::Replace;
     else if (raw == QStringLiteral("clear")) value.value = FtpPasswordAction::Clear;
     return value;
+}
+
+QString passwordActionToWire(FtpPasswordAction action)
+{
+    switch (action) {
+    case FtpPasswordAction::Keep: return QStringLiteral("keep");
+    case FtpPasswordAction::Replace: return QStringLiteral("replace");
+    case FtpPasswordAction::Clear: return QStringLiteral("clear");
+    case FtpPasswordAction::Unknown: break;
+    }
+    return QString();
 }
 
 WireEnum<FtpControlScope> controlScopeFromWire(const QString& raw)
@@ -202,6 +313,9 @@ ApiResult<NormalizedTime> parseNormalizedTime(const QJsonObject& object)
         return ApiResult<NormalizedTime>::failure(error);
     }
     value.quality = timeQualityFromWire(quality);
+    if (!assign(optionalString(object, "boot_id"), &value.bootId, &error)) {
+        return ApiResult<NormalizedTime>::failure(error);
+    }
     return ApiResult<NormalizedTime>::success(std::move(value));
 }
 
@@ -224,13 +338,12 @@ ApiResult<EventSummaryDto> parseEventSummary(const QJsonObject& object)
     EventSummaryDto summary;
     QJsonObject eventTime;
     QString ocrStatus;
-    qint64 speedKmh = 0;
     if (!assign(requiredInteger(object, "event_id"), &summary.eventId, &error)
         || !assign(requiredInteger(object, "track_id"), &summary.trackId, &error)
         || !assign(requiredObject(object, "event_time"), &eventTime, &error)
         || !assign(parseNormalizedTime(eventTime), &summary.eventTime, &error)
         || !assign(requiredString(object, "motion_direction"), &summary.motionDirection, &error)
-        || !assign(requiredInteger(object, "speed_kmh"), &speedKmh, &error)
+        || !assign(speedKmhField(object), &summary.speedKmh, &error)
         || !assign(requiredBool(object, "speed_valid"), &summary.speedValid, &error)
         || !assign(requiredString(object, "speed_status"), &summary.speedStatus, &error)
         || !assign(requiredString(object, "ocr_status"), &ocrStatus, &error)
@@ -239,14 +352,12 @@ ApiResult<EventSummaryDto> parseEventSummary(const QJsonObject& object)
         || !assign(requiredString(object, "plate_color"), &summary.plateColor, &error)
         || !assign(requiredString(object, "evidence_status"), &summary.evidenceStatus, &error)
         || !assign(requiredBool(object, "evidence_available"), &summary.evidenceAvailable, &error)
-        || !assign(requiredString(object, "detail_relative_url"), &summary.detailRelativeUrl, &error)
-        || !assign(requiredString(object, "evidence_relative_url"), &summary.evidenceRelativeUrl, &error)) {
+        || !assign(optionalString(object, "capture_status", QStringLiteral("saved")), &summary.captureStatus, &error)
+        || !assign(optionalString(object, "capture_error"), &summary.captureError, &error)
+        || !assignCompatibleUrl(object, "detail_relative_url", "detail_url", &summary.detailRelativeUrl, &error)
+        || !assignCompatibleUrl(object, "evidence_relative_url", "evidence_url", &summary.evidenceRelativeUrl, &error)) {
         return ApiResult<EventSummaryDto>::failure(error);
     }
-    if (speedKmh < std::numeric_limits<int>::min() || speedKmh > std::numeric_limits<int>::max()) {
-        return failure<EventSummaryDto>(QStringLiteral("invalid_field"), QStringLiteral("speed_kmh is outside int range."));
-    }
-    summary.speedKmh = static_cast<int>(speedKmh);
     summary.ocrStatus = ocrStatusFromWire(ocrStatus);
     summary.rawJson = object;
     return ApiResult<EventSummaryDto>::success(std::move(summary));
@@ -421,12 +532,12 @@ ApiError BoardApiCodec::parseError(int httpStatus, const QByteArray& payload) co
     if (!code.isString() || !message.isString()) {
         return classifiedError(httpStatus, QStringLiteral("invalid_error_response"), QStringLiteral("Board returned an invalid error response."));
     }
-    Q_UNUSED(message);
     const QString errorCode = code.toString();
+    const QString errorMessage = httpStatus == 400 ? message.toString().trimmed() : QString();
     return classifiedError(
         httpStatus,
         isStableErrorCode(errorCode) ? errorCode : QStringLiteral("http_error"),
-        safeHttpErrorMessage(httpStatus));
+        errorMessage.isEmpty() ? safeHttpErrorMessage(httpStatus) : errorMessage);
 }
 
 ApiResult<HealthDto> BoardApiCodec::parseHealth(const QByteArray& payload) const
@@ -505,8 +616,19 @@ ApiResult<EventDetailDto> BoardApiCodec::parseEventDetail(const QByteArray& payl
     if (!parsed.isSuccess()) return ApiResult<EventDetailDto>::failure(parsed.error());
     const QJsonObject object = parsed.value();
     QJsonObject summaryObject = object;
-    const QJsonValue evidence = object.value(QStringLiteral("evidence_relative_url"));
-    if (evidence.isUndefined() || evidence.isNull()) {
+    const QJsonValue evidence = object.contains(QStringLiteral("evidence_relative_url"))
+        ? object.value(QStringLiteral("evidence_relative_url"))
+        : object.value(QStringLiteral("evidence_url"));
+    if (!summaryObject.contains(QStringLiteral("evidence_relative_url"))
+        && summaryObject.contains(QStringLiteral("evidence_url"))) {
+        summaryObject.insert(QStringLiteral("evidence_relative_url"), summaryObject.value(QStringLiteral("evidence_url")));
+    }
+    if (!summaryObject.contains(QStringLiteral("detail_relative_url"))
+        && summaryObject.contains(QStringLiteral("detail_url"))) {
+        summaryObject.insert(QStringLiteral("detail_relative_url"), summaryObject.value(QStringLiteral("detail_url")));
+    }
+    if (summaryObject.value(QStringLiteral("evidence_relative_url")).isUndefined()
+        || summaryObject.value(QStringLiteral("evidence_relative_url")).isNull()) {
         summaryObject.insert(QStringLiteral("evidence_relative_url"), QString());
     }
     const auto summary = parseEventSummary(summaryObject);
@@ -523,8 +645,15 @@ ApiResult<EventDetailDto> BoardApiCodec::parseEventDetail(const QByteArray& payl
         || !assign(requiredObject(object, "images"), &detail.images, &error)) {
         return ApiResult<EventDetailDto>::failure(error);
     }
+    const QJsonValue timing = object.value(QStringLiteral("capture_timing"));
+    if (!timing.isUndefined() && !timing.isNull()) {
+        if (!timing.isObject()) {
+            return failure<EventDetailDto>(QStringLiteral("invalid_field"), QStringLiteral("Expected object or null capture_timing."));
+        }
+        detail.captureTiming = timing.toObject();
+    }
     if (!evidence.isUndefined() && !evidence.isNull() && !evidence.isString()) {
-        return failure<EventDetailDto>(QStringLiteral("invalid_field"), QStringLiteral("Expected string or null evidence_relative_url."));
+        return failure<EventDetailDto>(QStringLiteral("invalid_field"), QStringLiteral("Expected string or null evidence URL."));
     }
     if (evidence.isString()) detail.evidenceRelativeUrl = evidence.toString();
     detail.rawJson = object;
@@ -577,6 +706,125 @@ ApiResult<TimeStatusDto> BoardApiCodec::parseTimeStatus(const QByteArray& payloa
     }
     status.rawJson = object;
     return ApiResult<TimeStatusDto>::success(std::move(status));
+}
+
+ApiResult<TriggerModeConfigDto> BoardApiCodec::parseTriggerModeConfig(const QByteArray& payload) const
+{
+    const auto parsed = parseObject(payload);
+    if (!parsed.isSuccess()) return ApiResult<TriggerModeConfigDto>::failure(parsed.error());
+    const QJsonObject object = parsed.value();
+    ApiError error;
+    TriggerModeConfigDto config;
+    QJsonObject trigger;
+    QJsonArray supportedModes;
+    if (!requireApiVersion(object, &config.apiVersion, &error)
+        || !assign(requiredString(object, "revision"), &config.revision, &error)
+        || !assign(requiredObject(object, "trigger"), &trigger, &error)
+        || !assign(requiredString(trigger, "trigger_mode"), &config.triggerMode, &error)
+        || !assign(requiredArray(trigger, "supported_modes"), &supportedModes, &error)
+        || !assign(requiredBool(object, "write_enabled"), &config.writeEnabled, &error)
+        || !assign(requiredBool(object, "restart_required"), &config.restartRequired, &error)
+        || !assign(requiredString(object, "apply_mode"), &config.applyMode, &error)
+        || !assign(optionalString(object, "runtime_revision"), &config.runtimeRevision, &error)
+        || !assign(optionalString(object, "apply_endpoint"), &config.applyEndpoint, &error)) {
+        return ApiResult<TriggerModeConfigDto>::failure(error);
+    }
+    for (const QJsonValue& value : supportedModes) {
+        if (!value.isString()) {
+            return failure<TriggerModeConfigDto>(QStringLiteral("invalid_field"), QStringLiteral("Trigger mode list must contain strings."));
+        }
+        config.supportedModes.append(value.toString());
+    }
+    if (!config.supportedModes.contains(config.triggerMode)) {
+        return failure<TriggerModeConfigDto>(QStringLiteral("invalid_field"), QStringLiteral("Current trigger mode is not supported."));
+    }
+    config.rawJson = object;
+    return ApiResult<TriggerModeConfigDto>::success(std::move(config));
+}
+
+ApiResult<LineRegionConfigDto> BoardApiCodec::parseLineRegionConfig(const QByteArray& payload) const
+{
+    const auto parsed = parseObject(payload);
+    if (!parsed.isSuccess()) return ApiResult<LineRegionConfigDto>::failure(parsed.error());
+    const QJsonObject object = parsed.value();
+    ApiError error;
+    LineRegionConfigDto config;
+    QJsonObject region;
+    if (!requireApiVersion(object, &config.apiVersion, &error)
+        || !assign(requiredString(object, "revision"), &config.revision, &error)
+        || !assign(requiredBool(object, "write_enabled"), &config.writeEnabled, &error)
+        || !assign(requiredObject(object, "line_region"), &region, &error)
+        || !assign(requiredBool(object, "restart_required"), &config.restartRequired, &error)
+        || !assign(requiredString(object, "apply_mode"), &config.applyMode, &error)
+        || !assign(optionalString(object, "runtime_revision"), &config.runtimeRevision, &error)
+        || !assign(optionalString(object, "coordinate_space"), &config.coordinateSpace, &error)
+        || !assign(optionalString(object, "apply_endpoint"), &config.applyEndpoint, &error)) {
+        return ApiResult<LineRegionConfigDto>::failure(error);
+    }
+    auto assignInt = [&](const char* key, int* target, qint64 fallback, bool required) -> bool {
+        qint64 value = 0;
+        const auto result = required ? requiredInteger(region, key) : optionalInteger(region, key, fallback);
+        if (!assign(result, &value, &error)) return false;
+        if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
+            error = protocolError(QStringLiteral("invalid_field"), QStringLiteral("Line-region integer is out of range."));
+            return false;
+        }
+        *target = static_cast<int>(value);
+        return true;
+    };
+    LineRegionSettings& line = config.lineRegion;
+    if (!assignInt("left_permille", &line.leftPermille, 0, true)
+        || !assignInt("right_permille", &line.rightPermille, 1000, true)
+        || !assignInt("light_line_enabled", &line.lightLineEnabled, 0, false)
+        || !assignInt("light_line_permille", &line.lightLinePermille, 100, false)
+        || !assignInt("pre_line_permille", &line.preLinePermille, 200, true)
+        || !assignInt("trigger_line_permille", &line.triggerLinePermille, 360, true)
+        || !assignInt("down_light_line_permille", &line.downLightLinePermille, line.lightLinePermille, false)
+        || !assignInt("down_pre_line_permille", &line.downPreLinePermille, line.preLinePermille, false)
+        || !assignInt("down_trigger_line_permille", &line.downTriggerLinePermille, line.triggerLinePermille, false)
+        || !assignInt("up_light_line_permille", &line.upLightLinePermille, line.lightLinePermille, false)
+        || !assignInt("up_pre_line_permille", &line.upPreLinePermille, line.triggerLinePermille, false)
+        || !assignInt("up_trigger_line_permille", &line.upTriggerLinePermille, line.preLinePermille, false)
+        || !assignInt("direction", &line.direction, 1, true)
+        || !assignInt("bidirectional", &line.bidirectional, 0, true)
+        || !assign(optionalString(region, "light_color"), &line.lightColor, &error)
+        || !assign(optionalString(region, "pre_color"), &line.preColor, &error)
+        || !assign(optionalString(region, "trigger_color"), &line.triggerColor, &error)) {
+        return ApiResult<LineRegionConfigDto>::failure(error);
+    }
+    auto validPermille = [](int value) { return value >= 0 && value <= 1000; };
+    if (!validPermille(line.leftPermille) || !validPermille(line.rightPermille)
+        || !validPermille(line.lightLinePermille) || !validPermille(line.preLinePermille)
+        || !validPermille(line.triggerLinePermille) || !validPermille(line.downLightLinePermille)
+        || !validPermille(line.downPreLinePermille) || !validPermille(line.downTriggerLinePermille)
+        || !validPermille(line.upLightLinePermille) || !validPermille(line.upPreLinePermille)
+        || !validPermille(line.upTriggerLinePermille)
+        || (line.direction != 1 && line.direction != -1)
+        || (line.bidirectional != 0 && line.bidirectional != 1)
+        || (line.lightLineEnabled != 0 && line.lightLineEnabled != 1)) {
+        return failure<LineRegionConfigDto>(QStringLiteral("invalid_field"), QStringLiteral("Invalid line-region values."));
+    }
+    config.rawJson = object;
+    return ApiResult<LineRegionConfigDto>::success(std::move(config));
+}
+
+ApiResult<RuntimeApplyDto> BoardApiCodec::parseRuntimeApply(const QByteArray& payload) const
+{
+    const auto parsed = parseObject(payload);
+    if (!parsed.isSuccess()) return ApiResult<RuntimeApplyDto>::failure(parsed.error());
+    const QJsonObject object = parsed.value();
+    ApiError error;
+    RuntimeApplyDto result;
+    if (!requireApiVersion(object, &result.apiVersion, &error)
+        || !assign(requiredString(object, "runtime_revision"), &result.runtimeRevision, &error)
+        || !assign(requiredString(object, "state"), &result.state, &error)
+        || !assign(requiredString(object, "restart_scope"), &result.restartScope, &error)
+        || !assign(requiredString(object, "old_rkipc_pid"), &result.oldRkipcPid, &error)
+        || !assign(requiredString(object, "new_rkipc_pid"), &result.newRkipcPid, &error)) {
+        return ApiResult<RuntimeApplyDto>::failure(error);
+    }
+    result.rawJson = object;
+    return ApiResult<RuntimeApplyDto>::success(std::move(result));
 }
 
 ApiResult<FtpConfigSnapshotDto> BoardApiCodec::parseFtpConfig(const QByteArray& payload) const
@@ -643,8 +891,17 @@ ApiResult<FtpControlDto> BoardApiCodec::parseFtpControl(const QByteArray& payloa
     if (!requireApiVersion(object, &control.apiVersion, &error)
         || !assign(requiredString(object, "revision"), &control.revision, &error)
         || !assign(requiredBool(object, "enabled"), &control.enabled, &error)
-        || !assign(requiredString(object, "scope"), &scope, &error)) {
+        || !assign(optionalString(object, "scope"), &scope, &error)
+        || !assign(optionalInteger(object, "min_event_epoch_ms", -1), &control.minEventEpochMs, &error)
+        || !assign(optionalBool(object, "write_enabled", true), &control.writeEnabled, &error)
+        || !assign(optionalBool(object, "restart_required", false), &control.restartRequired, &error)
+        || !assign(optionalString(object, "apply_mode"), &control.applyMode, &error)) {
         return ApiResult<FtpControlDto>::failure(error);
+    }
+    if (scope.isEmpty()) {
+        scope = control.enabled && control.minEventEpochMs == 0
+            ? QStringLiteral("all_existing")
+            : (control.enabled ? QStringLiteral("new_events_only") : QStringLiteral("preserve"));
     }
     control.scope = controlScopeFromWire(scope);
     control.rawJson = object;
@@ -662,7 +919,7 @@ ApiResult<FtpTaskPageDto> BoardApiCodec::parseFtpTaskPage(const QByteArray& payl
     qint64 count = 0;
     if (!requireApiVersion(object, &page.apiVersion, &error)
         || !assign(requiredArray(object, "items"), &items, &error)
-        || !assign(requiredInteger(object, "count"), &count, &error)
+        || !assign(optionalInteger(object, "count", items.size()), &count, &error)
         || !assign(requiredBool(object, "has_more"), &page.hasMore, &error)) {
         return ApiResult<FtpTaskPageDto>::failure(error);
     }
@@ -686,10 +943,30 @@ ApiResult<FtpTaskDetailDto> BoardApiCodec::parseFtpTaskDetail(const QByteArray& 
 {
     const auto parsed = parseObject(payload);
     if (!parsed.isSuccess()) return ApiResult<FtpTaskDetailDto>::failure(parsed.error());
-    const QJsonObject object = parsed.value();
+    QJsonObject object = parsed.value();
+    QJsonObject root = object;
+    ApiError error;
+    QString apiVersion;
+    if (root.contains(QStringLiteral("api_version")) && !requireApiVersion(root, &apiVersion, &error)) {
+        return ApiResult<FtpTaskDetailDto>::failure(error);
+    }
+    const QJsonValue taskValue = root.value(QStringLiteral("task"));
+    if (!taskValue.isUndefined()) {
+        if (!taskValue.isObject()) {
+            return failure<FtpTaskDetailDto>(QStringLiteral("invalid_field"), QStringLiteral("Expected object field: task"));
+        }
+        object = taskValue.toObject();
+    } else if (root.contains(QStringLiteral("retry_queued"))) {
+        FtpTaskDetailDto detail;
+        if (!assign(requiredString(root, "task_id"), &detail.summary.taskId, &error)
+            || !assign(requiredInteger(root, "retry_queued"), &detail.retryQueued, &error)) {
+            return ApiResult<FtpTaskDetailDto>::failure(error);
+        }
+        detail.rawJson = root;
+        return ApiResult<FtpTaskDetailDto>::success(std::move(detail));
+    }
     const auto summary = parseFtpTaskSummary(object);
     if (!summary.isSuccess()) return ApiResult<FtpTaskDetailDto>::failure(summary.error());
-    ApiError error;
     QJsonArray targets;
     if (!assign(requiredArray(object, "targets"), &targets, &error)) return ApiResult<FtpTaskDetailDto>::failure(error);
     FtpTaskDetailDto detail;
@@ -727,8 +1004,30 @@ ApiResult<FtpTaskDetailDto> BoardApiCodec::parseFtpTaskDetail(const QByteArray& 
         target.attempts = static_cast<int>(attempts);
         detail.targets.append(std::move(target));
     }
-    detail.rawJson = object;
+    detail.rawJson = root;
     return ApiResult<FtpTaskDetailDto>::success(std::move(detail));
+}
+
+ApiResult<ClientAckDto> BoardApiCodec::parseClientAck(const QByteArray& payload) const
+{
+    const auto parsed = parseObject(payload);
+    if (!parsed.isSuccess()) return ApiResult<ClientAckDto>::failure(parsed.error());
+    const QJsonObject object = parsed.value();
+    ApiError error;
+    ClientAckDto ack;
+    QJsonObject ackObject;
+    if (!requireApiVersion(object, &ack.apiVersion, &error)
+        || !assign(requiredObject(object, "ack"), &ackObject, &error)
+        || !assign(requiredString(ackObject, "device_id"), &ack.deviceId, &error)
+        || !assign(requiredString(ackObject, "client_id"), &ack.clientId, &error)
+        || !assign(requiredInteger(ackObject, "event_id"), &ack.eventId, &error)
+        || !assign(requiredInteger(ackObject, "track_id"), &ack.trackId, &error)
+        || !assign(requiredInteger(ackObject, "evidence_size"), &ack.evidenceSize, &error)
+        || !assign(requiredInteger(ackObject, "persisted_epoch_ms"), &ack.persistedEpochMs, &error)) {
+        return ApiResult<ClientAckDto>::failure(error);
+    }
+    ack.rawJson = object;
+    return ApiResult<ClientAckDto>::success(std::move(ack));
 }
 
 ApiResult<QByteArray> BoardApiCodec::encodeEvidenceConfig(const EvidenceConfigUpdate& update) const
@@ -756,6 +1055,72 @@ ApiResult<QByteArray> BoardApiCodec::encodeTimeUpdate(const TimeUpdate& update) 
     return ApiResult<QByteArray>::success(compactJson(QJsonObject {{QStringLiteral("utc_epoch_ms"), update.utcEpochMs}}));
 }
 
+ApiResult<QByteArray> BoardApiCodec::encodeTriggerModeConfig(const TriggerModeUpdate& update) const
+{
+    if (update.expectedRevision.isEmpty()
+        || (update.triggerMode != QLatin1String("dual_line")
+            && update.triggerMode != QLatin1String("pre_line_delayed")
+            && update.triggerMode != QLatin1String("trigger_only"))) {
+        return ApiResult<QByteArray>::failure(validationError(
+            QStringLiteral("invalid_trigger_mode_config"),
+            QStringLiteral("Invalid trigger mode update.")));
+    }
+    QJsonObject object;
+    object.insert(QStringLiteral("expected_revision"), update.expectedRevision);
+    object.insert(QStringLiteral("trigger_mode"), update.triggerMode);
+    return ApiResult<QByteArray>::success(compactJson(object));
+}
+
+ApiResult<QByteArray> BoardApiCodec::encodeLineRegionConfig(const LineRegionUpdate& update) const
+{
+    const LineRegionSettings& line = update.lineRegion;
+    auto validPermille = [](int value) { return value >= 0 && value <= 1000; };
+    if (update.expectedRevision.isEmpty()
+        || !validPermille(line.leftPermille) || !validPermille(line.rightPermille)
+        || !validPermille(line.lightLinePermille) || !validPermille(line.preLinePermille)
+        || !validPermille(line.triggerLinePermille) || !validPermille(line.downLightLinePermille)
+        || !validPermille(line.downPreLinePermille) || !validPermille(line.downTriggerLinePermille)
+        || !validPermille(line.upLightLinePermille) || !validPermille(line.upPreLinePermille)
+        || !validPermille(line.upTriggerLinePermille)
+        || (line.direction != 1 && line.direction != -1)
+        || (line.bidirectional != 0 && line.bidirectional != 1)
+        || (line.lightLineEnabled != 0 && line.lightLineEnabled != 1)) {
+        return ApiResult<QByteArray>::failure(validationError(
+            QStringLiteral("invalid_line_region_config"),
+            QStringLiteral("Invalid line-region update.")));
+    }
+    QJsonObject object;
+    object.insert(QStringLiteral("expected_revision"), update.expectedRevision);
+    object.insert(QStringLiteral("left_permille"), line.leftPermille);
+    object.insert(QStringLiteral("right_permille"), line.rightPermille);
+    object.insert(QStringLiteral("light_line_enabled"), line.lightLineEnabled);
+    object.insert(QStringLiteral("light_line_permille"), line.lightLinePermille);
+    object.insert(QStringLiteral("pre_line_permille"), line.preLinePermille);
+    object.insert(QStringLiteral("trigger_line_permille"), line.triggerLinePermille);
+    object.insert(QStringLiteral("down_light_line_permille"), line.downLightLinePermille);
+    object.insert(QStringLiteral("down_pre_line_permille"), line.downPreLinePermille);
+    object.insert(QStringLiteral("down_trigger_line_permille"), line.downTriggerLinePermille);
+    object.insert(QStringLiteral("up_light_line_permille"), line.upLightLinePermille);
+    object.insert(QStringLiteral("up_pre_line_permille"), line.upPreLinePermille);
+    object.insert(QStringLiteral("up_trigger_line_permille"), line.upTriggerLinePermille);
+    object.insert(QStringLiteral("direction"), line.direction);
+    object.insert(QStringLiteral("bidirectional"), line.bidirectional);
+    return ApiResult<QByteArray>::success(compactJson(object));
+}
+
+ApiResult<QByteArray> BoardApiCodec::encodeRuntimeApply(const RuntimeApplyUpdate& update) const
+{
+    if (update.expectedRevision.isEmpty() || update.scope != QLatin1String("rkipc")) {
+        return ApiResult<QByteArray>::failure(validationError(
+            QStringLiteral("invalid_runtime_apply"),
+            QStringLiteral("Invalid runtime apply request.")));
+    }
+    QJsonObject object;
+    object.insert(QStringLiteral("expected_revision"), update.expectedRevision);
+    object.insert(QStringLiteral("scope"), update.scope);
+    return ApiResult<QByteArray>::success(compactJson(object));
+}
+
 ApiResult<QByteArray> BoardApiCodec::encodeFtpConfig(const FtpConfigUpdate& update) const
 {
     if (update.expectedRevision.isEmpty() || update.deviceId.isEmpty() || update.targets.size() > 8
@@ -767,7 +1132,7 @@ ApiResult<QByteArray> BoardApiCodec::encodeFtpConfig(const FtpConfigUpdate& upda
     QJsonArray targets;
     for (const FtpTargetUpdate& target : update.targets) {
         QHostAddress host;
-        if (target.id.isEmpty() || ids.contains(target.id) || !host.setAddress(target.host)
+        if (!validFtpTargetId(target.id) || ids.contains(target.id) || !host.setAddress(target.host)
             || host.protocol() != QAbstractSocket::IPv4Protocol || target.port == 0
             || target.passwordAction.value == FtpPasswordAction::Unknown
             || (target.passwordAction.value == FtpPasswordAction::Replace && (!target.replacementPassword || target.replacementPassword->isEmpty()))
@@ -781,7 +1146,7 @@ ApiResult<QByteArray> BoardApiCodec::encodeFtpConfig(const FtpConfigUpdate& upda
         object.insert(QStringLiteral("host"), target.host);
         object.insert(QStringLiteral("port"), target.port);
         object.insert(QStringLiteral("user"), target.user);
-        object.insert(QStringLiteral("password_action"), target.passwordAction.rawValue);
+        object.insert(QStringLiteral("password_action"), passwordActionToWire(target.passwordAction.value));
         if (target.passwordAction.value == FtpPasswordAction::Replace) object.insert(QStringLiteral("password"), *target.replacementPassword);
         object.insert(QStringLiteral("remote_dir"), target.remoteDir);
         object.insert(QStringLiteral("passive"), target.passive);
@@ -842,6 +1207,29 @@ ApiResult<QByteArray> BoardApiCodec::encodeExpectedRevision(const QString& expec
         return ApiResult<QByteArray>::failure(validationError(QStringLiteral("invalid_ftp_config"), QStringLiteral("Expected revision is required.")));
     }
     return ApiResult<QByteArray>::success(compactJson(QJsonObject {{QStringLiteral("expected_revision"), expectedRevision}}));
+}
+
+ApiResult<QByteArray> BoardApiCodec::encodeClientAck(const ClientAckCreate& request) const
+{
+    if (request.clientId.isEmpty() || request.evidenceSize < 0) {
+        return ApiResult<QByteArray>::failure(validationError(QStringLiteral("invalid_client_ack"), QStringLiteral("Invalid client acknowledgement.")));
+    }
+    for (const QChar character : request.clientId) {
+        const ushort value = character.unicode();
+        const bool valid = (value >= 'A' && value <= 'Z')
+            || (value >= 'a' && value <= 'z')
+            || (value >= '0' && value <= '9')
+            || character == QLatin1Char('_')
+            || character == QLatin1Char('-')
+            || character == QLatin1Char('.');
+        if (!valid) {
+            return ApiResult<QByteArray>::failure(validationError(QStringLiteral("invalid_client_ack"), QStringLiteral("Invalid client acknowledgement.")));
+        }
+    }
+    QJsonObject object;
+    object.insert(QStringLiteral("client_id"), request.clientId);
+    object.insert(QStringLiteral("evidence_size"), request.evidenceSize);
+    return ApiResult<QByteArray>::success(compactJson(object));
 }
 
 } // namespace rv1126b

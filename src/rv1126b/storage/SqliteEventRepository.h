@@ -83,6 +83,7 @@ public:
 private:
     bool openDatabase(QString* errorMessage);
     bool ensureSchema(QString* errorMessage);
+    bool migrateEventSchema(QString* errorMessage);
     bool migrateEvidenceCacheSchema(QString* errorMessage);
     bool execSql(const QString& sql, QString* errorMessage);
     bool beginTransaction(QString* errorMessage);

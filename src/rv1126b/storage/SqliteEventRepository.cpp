@@ -5,10 +5,13 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPair>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QSet>
 #include <QVariant>
+#include <QVector>
 
 namespace rv1126b {
 namespace {
@@ -301,7 +304,8 @@ RequestId SqliteEventRepository::queryEvents(
         "SELECT device_id, event_id, track_id, event_epoch_ms, source_epoch_ms, offset_applied_ms, "
         "time_quality_value, time_quality_raw, motion_direction, speed_kmh, speed_valid, speed_status, "
         "ocr_status_value, ocr_status_raw, plate_text, plate_ascii, plate_color, evidence_status, "
-        "evidence_available, detail_relative_url, evidence_relative_url, first_seen_epoch_ms, last_updated_epoch_ms "
+        "evidence_available, detail_relative_url, evidence_relative_url, capture_status, capture_error, "
+        "first_seen_epoch_ms, last_updated_epoch_ms "
         "FROM rv_events");
     if (!where.isEmpty()) {
         sql += QStringLiteral(" WHERE ") + where.join(QStringLiteral(" AND "));
@@ -362,7 +366,8 @@ RequestId SqliteEventRepository::loadEvent(
         "SELECT device_id, event_id, track_id, event_epoch_ms, source_epoch_ms, offset_applied_ms, "
         "time_quality_value, time_quality_raw, motion_direction, speed_kmh, speed_valid, speed_status, "
         "ocr_status_value, ocr_status_raw, plate_text, plate_ascii, plate_color, evidence_status, "
-        "evidence_available, detail_relative_url, evidence_relative_url, first_seen_epoch_ms, last_updated_epoch_ms "
+        "evidence_available, detail_relative_url, evidence_relative_url, capture_status, capture_error, "
+        "first_seen_epoch_ms, last_updated_epoch_ms "
         "FROM rv_events WHERE %1").arg(identityWhereClause()));
     bindIdentity(query, identity);
 
@@ -437,7 +442,8 @@ RequestId SqliteEventRepository::loadNonTerminalEvents(
         "SELECT device_id, event_id, track_id, event_epoch_ms, source_epoch_ms, offset_applied_ms, "
         "time_quality_value, time_quality_raw, motion_direction, speed_kmh, speed_valid, speed_status, "
         "ocr_status_value, ocr_status_raw, plate_text, plate_ascii, plate_color, evidence_status, "
-        "evidence_available, detail_relative_url, evidence_relative_url, first_seen_epoch_ms, last_updated_epoch_ms "
+        "evidence_available, detail_relative_url, evidence_relative_url, capture_status, capture_error, "
+        "first_seen_epoch_ms, last_updated_epoch_ms "
         "FROM rv_events WHERE device_id = :device_id AND ocr_status_value IN (:queued, :unknown) "
         "ORDER BY event_epoch_ms ASC, event_id ASC, track_id ASC"));
     query.bindValue(QStringLiteral(":device_id"), deviceId);
@@ -758,6 +764,8 @@ bool SqliteEventRepository::ensureSchema(QString* errorMessage)
             "evidence_available INTEGER NOT NULL,"
             "detail_relative_url TEXT,"
             "evidence_relative_url TEXT,"
+            "capture_status TEXT,"
+            "capture_error TEXT,"
             "first_seen_epoch_ms INTEGER NOT NULL,"
             "last_updated_epoch_ms INTEGER NOT NULL,"
             "PRIMARY KEY (device_id, event_id, track_id)"
@@ -846,7 +854,8 @@ bool SqliteEventRepository::ensureSchema(QString* errorMessage)
         }
     }
 
-    if (!migrateEvidenceCacheSchema(errorMessage)) {
+    if (!migrateEventSchema(errorMessage)
+        || !migrateEvidenceCacheSchema(errorMessage)) {
         rollbackTransaction();
         return false;
     }
@@ -861,6 +870,34 @@ bool SqliteEventRepository::ensureSchema(QString* errorMessage)
     if (!commitTransaction(errorMessage)) {
         rollbackTransaction();
         return false;
+    }
+    return true;
+}
+
+bool SqliteEventRepository::migrateEventSchema(QString* errorMessage)
+{
+    QSqlQuery infoQuery(database_);
+    if (!infoQuery.exec(QStringLiteral("PRAGMA table_info(rv_events)"))) {
+        if (errorMessage) {
+            *errorMessage = sqlErrorText(infoQuery);
+        }
+        return false;
+    }
+
+    QSet<QString> columns;
+    while (infoQuery.next()) {
+        columns.insert(infoQuery.value(1).toString());
+    }
+    infoQuery.finish();
+
+    const QVector<QPair<QString, QString>> additions {
+        {QStringLiteral("capture_status"), QStringLiteral("ALTER TABLE rv_events ADD COLUMN capture_status TEXT")},
+        {QStringLiteral("capture_error"), QStringLiteral("ALTER TABLE rv_events ADD COLUMN capture_error TEXT")}
+    };
+    for (const auto& addition : additions) {
+        if (!columns.contains(addition.first) && !execSql(addition.second, errorMessage)) {
+            return false;
+        }
     }
     return true;
 }
@@ -1018,12 +1055,14 @@ bool SqliteEventRepository::upsertEventInternal(const VehicleEvent& event, QStri
         "device_id, event_id, track_id, event_epoch_ms, source_epoch_ms, offset_applied_ms, "
         "time_quality_value, time_quality_raw, motion_direction, speed_kmh, speed_valid, speed_status, "
         "ocr_status_value, ocr_status_raw, plate_text, plate_ascii, plate_color, evidence_status, "
-        "evidence_available, detail_relative_url, evidence_relative_url, first_seen_epoch_ms, last_updated_epoch_ms"
+        "evidence_available, detail_relative_url, evidence_relative_url, capture_status, capture_error, "
+        "first_seen_epoch_ms, last_updated_epoch_ms"
         ") VALUES ("
         ":device_id, :event_id, :track_id, :event_epoch_ms, :source_epoch_ms, :offset_applied_ms, "
         ":time_quality_value, :time_quality_raw, :motion_direction, :speed_kmh, :speed_valid, :speed_status, "
         ":ocr_status_value, :ocr_status_raw, :plate_text, :plate_ascii, :plate_color, :evidence_status, "
-        ":evidence_available, :detail_relative_url, :evidence_relative_url, :first_seen_epoch_ms, :last_updated_epoch_ms"
+        ":evidence_available, :detail_relative_url, :evidence_relative_url, :capture_status, :capture_error, "
+        ":first_seen_epoch_ms, :last_updated_epoch_ms"
         ") ON CONFLICT(device_id, event_id, track_id) DO UPDATE SET "
         "event_epoch_ms = excluded.event_epoch_ms, source_epoch_ms = excluded.source_epoch_ms, "
         "offset_applied_ms = excluded.offset_applied_ms, time_quality_value = excluded.time_quality_value, "
@@ -1033,6 +1072,7 @@ bool SqliteEventRepository::upsertEventInternal(const VehicleEvent& event, QStri
         "plate_text = excluded.plate_text, plate_ascii = excluded.plate_ascii, plate_color = excluded.plate_color, "
         "evidence_status = excluded.evidence_status, evidence_available = excluded.evidence_available, "
         "detail_relative_url = excluded.detail_relative_url, evidence_relative_url = excluded.evidence_relative_url, "
+        "capture_status = excluded.capture_status, capture_error = excluded.capture_error, "
         "last_updated_epoch_ms = excluded.last_updated_epoch_ms"));
     bindIdentity(query, event.identity);
     query.bindValue(QStringLiteral(":event_epoch_ms"), event.eventTime.epochMs);
@@ -1053,6 +1093,8 @@ bool SqliteEventRepository::upsertEventInternal(const VehicleEvent& event, QStri
     query.bindValue(QStringLiteral(":evidence_available"), event.evidenceAvailable ? 1 : 0);
     query.bindValue(QStringLiteral(":detail_relative_url"), event.detailRelativeUrl);
     query.bindValue(QStringLiteral(":evidence_relative_url"), event.evidenceRelativeUrl);
+    query.bindValue(QStringLiteral(":capture_status"), event.captureStatus);
+    query.bindValue(QStringLiteral(":capture_error"), event.captureError);
     query.bindValue(QStringLiteral(":first_seen_epoch_ms"), event.firstSeenEpochMs);
     query.bindValue(QStringLiteral(":last_updated_epoch_ms"), event.lastUpdatedEpochMs);
 
@@ -1228,8 +1270,10 @@ VehicleEvent SqliteEventRepository::eventFromQuery(const QSqlQuery& query) const
     event.evidenceAvailable = query.value(18).toInt() != 0;
     event.detailRelativeUrl = query.value(19).toString();
     event.evidenceRelativeUrl = query.value(20).toString();
-    event.firstSeenEpochMs = query.value(21).toLongLong();
-    event.lastUpdatedEpochMs = query.value(22).toLongLong();
+    event.captureStatus = query.value(21).toString();
+    event.captureError = query.value(22).toString();
+    event.firstSeenEpochMs = query.value(23).toLongLong();
+    event.lastUpdatedEpochMs = query.value(24).toLongLong();
     return event;
 }
 

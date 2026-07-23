@@ -110,7 +110,7 @@ MainWindow::MainWindow(MainWindowDependencies dependencies, QWidget *parent)
                            ? nullptr
                            : new rv1126b::EventViewController(
                                  {dependencies.eventRepository, dependencies.evidenceCache}, this)),
-      rtspPlayer_(dependencies.player), eventSyncForDevice_(std::move(dependencies.eventSyncForDevice)), boardApiForDevice_(dependencies.boardApiForDevice), evidenceMaintenance_(dependencies.evidenceMaintenance), evidenceRootPath_(std::move(dependencies.evidenceRootPath)), switchEvidenceRoot_(std::move(dependencies.switchEvidenceRoot)), deviceModel_(new DeviceTableModel(this)), propertyModel_(new DevicePropertyModel(this)), captureModel_(new CaptureRecordTableModel(this)), currentSystemSettings_(systemSettingsService_->load()), storageService_(currentSystemSettings_.storage), mockMode_(dependencies.mockMode)
+      rtspPlayer_(dependencies.player), ftpReceiveServer_(dependencies.ftpReceiveServer), eventSyncForDevice_(std::move(dependencies.eventSyncForDevice)), boardApiForDevice_(dependencies.boardApiForDevice), evidenceMaintenance_(dependencies.evidenceMaintenance), evidenceRootPath_(std::move(dependencies.evidenceRootPath)), switchEvidenceRoot_(std::move(dependencies.switchEvidenceRoot)), deviceModel_(new DeviceTableModel(this)), propertyModel_(new DevicePropertyModel(this)), captureModel_(new CaptureRecordTableModel(this)), currentSystemSettings_(systemSettingsService_->load()), storageService_(currentSystemSettings_.storage), mockMode_(dependencies.mockMode)
 {
     deviceModel_->setRealMode(!mockMode_);
     setWindowTitle(QStringLiteral("车牌识别雷达测速摄像机管理软件"));
@@ -479,6 +479,17 @@ void MainWindow::connectEventController()
             { statusBar()->showMessage(QStringLiteral("已导出 %1 条真实事件：%2").arg(count).arg(path), 5000); });
     connect(eventController_, &rv1126b::EventViewController::userError,
             this, &MainWindow::handleIntegrationError);
+    connect(eventController_, &rv1126b::EventViewController::syncHealthy,
+            this, [this](const QString&) {
+                if (!persistentStatusLabel_ || !persistentStatusLabel_->isVisible()) {
+                    return;
+                }
+                const QString text = persistentStatusLabel_->text();
+                if (text.contains(QStringLiteral("事件")) || text.contains(QStringLiteral("event"))) {
+                    persistentStatusLabel_->clear();
+                    persistentStatusLabel_->setVisible(false);
+                }
+            });
 }
 
 void MainWindow::populateInitialData()
@@ -970,6 +981,7 @@ void MainWindow::updateVideoWidgets()
     if (livePreviewPanel_)
     {
         livePreviewPanel_->setCurrentDevice(device ? device->id : QString());
+        livePreviewPanel_->setBoardApiClient(device && boardApiForDevice_ ? boardApiForDevice_(device->id) : nullptr);
     }
     snapshotPreview_->setDevice(device);
     if (mockMode_)
@@ -1218,7 +1230,8 @@ void MainWindow::openDeviceConfig()
             device->id, operationsController_,
             online ? Rv1126bDeviceManagementDialog::InitialPage::Evidence
                    : Rv1126bDeviceManagementDialog::InitialPage::FtpTasks,
-            this, online);
+            this, online, ftpReceiveServer_,
+            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")));
         dialog.exec();
         return;
     }
@@ -1291,7 +1304,8 @@ void MainWindow::syncSelectedDeviceTime()
         }
         Rv1126bDeviceManagementDialog dialog(
             device->id, operationsController_,
-            Rv1126bDeviceManagementDialog::InitialPage::Time, this);
+            Rv1126bDeviceManagementDialog::InitialPage::Time, this, true, ftpReceiveServer_,
+            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")));
         dialog.exec();
         return;
     }
@@ -1763,6 +1777,7 @@ void MainWindow::handleSelectedVideoDeviceChanged(const QString &deviceId)
     if (livePreviewPanel_)
     {
         livePreviewPanel_->setCurrentDevice(deviceId);
+        livePreviewPanel_->setBoardApiClient(!deviceId.isEmpty() && boardApiForDevice_ ? boardApiForDevice_(deviceId) : nullptr);
     }
     if (!mockMode_ && !deviceId.isEmpty() && currentSystemSettings_.ui.lastSelectedVideoDeviceId != deviceId)
     {

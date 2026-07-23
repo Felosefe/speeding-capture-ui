@@ -7,7 +7,9 @@
 #include <QVector>
 
 class QMediaPlayer;
-class QVideoWidget;
+class QVideoFrame;
+class QVideoSink;
+class QWidget;
 
 namespace rv1126b {
 
@@ -25,9 +27,11 @@ public:
 
 private:
     void disconnectAttemptSignals();
+    void handleVideoFrame(const QVideoFrame& frame, quint64 attemptToken);
 
     QMediaPlayer* mediaPlayer_ = nullptr;
-    QPointer<QVideoWidget> videoWidget_;
+    QVideoSink* videoSink_ = nullptr;
+    QPointer<QWidget> videoWidget_;
     QVector<QMetaObject::Connection> attemptConnections_;
 };
 
