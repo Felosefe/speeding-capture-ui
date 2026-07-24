@@ -22,6 +22,7 @@ private slots:
     void initTestCase();
     void downloadsValidJpegPromotesPartFileAndPersistsAvailable();
     void rejectsInvalidJpegRemovesPartAndPersistsFailed();
+    void missingEvidencePersistsMissingWithoutGlobalCacheError();
     void limitsDownloadsToOnePerDevice();
     void retriesConflictAndPromotesImage();
     void cancelPreventsScheduledRetry();
@@ -93,6 +94,7 @@ public:
     enum class DownloadMode {
         ValidJpeg,
         InvalidJpeg,
+        Missing,
         Failure,
         Hold
     };
@@ -153,6 +155,12 @@ public:
             if (requestedMode == DownloadMode::Failure) {
                 ApiError error = makeError(QStringLiteral("network_retry"), ApiErrorCategory::Temporary, true);
                 error.httpStatus = requestedFailureStatus;
+                completion(ApiResult<EvidenceDownloadResult>::failure(std::move(error)));
+                return;
+            }
+            if (requestedMode == DownloadMode::Missing) {
+                ApiError error = makeError(QStringLiteral("event_not_found"), ApiErrorCategory::NotFound, false);
+                error.httpStatus = 404;
                 completion(ApiResult<EvidenceDownloadResult>::failure(std::move(error)));
                 return;
             }
@@ -372,6 +380,31 @@ void EvidenceCacheTest::rejectsInvalidJpegRemovesPartAndPersistsFailed()
     const EvidenceCacheEntry entry = loadEvidence(repository, this, event.identity);
     QCOMPARE(entry.status, EvidenceCacheStatus::Failed);
     QCOMPARE(entry.failureCode, QStringLiteral("rv1126b.evidence.invalid_jpeg"));
+}
+
+void EvidenceCacheTest::missingEvidencePersistsMissingWithoutGlobalCacheError()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    SqliteEventRepository repository(databasePath(tempDir));
+    initializeRepository(repository, this);
+
+    FakeBoardApiClient client;
+    client.mode = FakeBoardApiClient::DownloadMode::Missing;
+    const VehicleEvent event = makeEvent(503);
+    BoardEvidenceCache cache(&client, &repository, QDir(tempDir.path()).filePath(QStringLiteral("cache")));
+    QSignalSpy stateSpy(&cache, &EvidenceCache::stateChanged);
+    QSignalSpy errorSpy(&cache, &EvidenceCache::cacheError);
+
+    cache.enqueue(event);
+
+    QTRY_VERIFY(loadEvidence(repository, this, event.identity).status == EvidenceCacheStatus::Missing);
+    QCOMPARE(errorSpy.size(), 0);
+
+    const EvidenceCacheEntry entry = loadEvidence(repository, this, event.identity);
+    QCOMPARE(entry.status, EvidenceCacheStatus::Missing);
+    QCOMPARE(entry.failureCode, QStringLiteral("event_not_found"));
 }
 
 void EvidenceCacheTest::limitsDownloadsToOnePerDevice()

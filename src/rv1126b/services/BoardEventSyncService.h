@@ -47,7 +47,7 @@ private:
     void handleSyncAnchorSaved(int generation, ApiResult<void> result);
     void handleNonTerminalEvents(int generation, ApiResult<QVector<VehicleEvent>> result);
     void refreshNextDetail(int generation);
-    void handleEventDetail(int generation, const EventIdentity& identity, ApiResult<EventDetailDto> result);
+    void handleEventDetail(int generation, const VehicleEvent& event, ApiResult<EventDetailDto> result);
     void handleDetailSaved(
         int generation,
         const VehicleEvent& updatedEvent,
@@ -74,7 +74,7 @@ private:
     bool initialCatchUpPending_ = true;
     std::optional<SyncAnchor> loadedAnchor_;
     std::optional<EventSortKey> cycleHead_;
-    QVector<EventIdentity> pendingDetailRefresh_;
+    QVector<VehicleEvent> pendingDetailRefresh_;
 };
 
 } // namespace rv1126b

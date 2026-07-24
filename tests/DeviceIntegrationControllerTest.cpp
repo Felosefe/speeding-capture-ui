@@ -227,6 +227,7 @@ private slots:
     void existingCredentialCanBeReused();
     void onlineSessionOpensSubStreamAndSupportsSwitching();
     void degradedHttpDoesNotStopVideoAndRtspFailureDoesNotChangeSession();
+    void retryableRtspFailureDoesNotRaiseGlobalUserError();
     void rtspFailureReportsGenericStorageProblemFromLastHealth();
     void rtspFailureReportsStoppedRkipcFromLastHealth();
     void authenticationFailureStopsVideoAndPromptsOnce();
@@ -381,6 +382,32 @@ void DeviceIntegrationControllerTest::degradedHttpDoesNotStopVideoAndRtspFailure
     QCOMPARE(sessionSpy.size(), 2);
     QCOMPARE(sessionSpy.last().at(0).value<DeviceSessionSnapshot>().state,
              DeviceSessionState::Degraded);
+}
+
+void DeviceIntegrationControllerTest::retryableRtspFailureDoesNotRaiseGlobalUserError()
+{
+    FakeDiscoveryService discoveryService;
+    FakeFleetService fleet;
+    FakeSecretStore secrets;
+    FakeRtspPlayer player;
+    DeviceIntegrationController controller({&discoveryService, &fleet, &secrets, &player});
+    QSignalSpy playbackErrorSpy(&controller, &DeviceIntegrationController::playbackError);
+    QSignalSpy userErrorSpy(&controller, &DeviceIntegrationController::userError);
+
+    const RequestId scanId = controller.startScan();
+    discoveryService.sendDevice(scanId, discovered());
+    controller.connectDiscoveredDevice(
+        QStringLiteral("device-a"), SecretValue(QByteArrayLiteral("token")));
+    fleet.sendSession(snapshot(fleet.lastProfile, DeviceSessionState::Online));
+
+    ApiError rtspError;
+    rtspError.code = QStringLiteral("rtsp_open_timeout");
+    rtspError.category = ApiErrorCategory::Network;
+    rtspError.retryable = true;
+    player.fail(rtspError);
+
+    QCOMPARE(playbackErrorSpy.size(), 1);
+    QCOMPARE(userErrorSpy.size(), 0);
 }
 
 void DeviceIntegrationControllerTest::rtspFailureReportsGenericStorageProblemFromLastHealth()

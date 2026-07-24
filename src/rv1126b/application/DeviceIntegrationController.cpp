@@ -447,6 +447,10 @@ void DeviceIntegrationController::handleFleetError(const ApiError& error)
 void DeviceIntegrationController::handlePlaybackError(const ApiError& error)
 {
     ApiError reported = error;
+    const bool transientPlaybackError = error.retryable
+        && (error.category == ApiErrorCategory::Network
+            || error.category == ApiErrorCategory::Temporary);
+    bool shouldEmitGlobalError = !transientPlaybackError;
     const QString deviceId = playbackDeviceId_.isEmpty() ? selectedVideoDeviceId_ : playbackDeviceId_;
     const auto snapshot = sessionFor(deviceId);
     if (snapshot) {
@@ -463,10 +467,12 @@ void DeviceIntegrationController::handlePlaybackError(const ApiError& error)
                 const bool storageWritable = storage.value(QStringLiteral("writable")).toBool(true);
                 if (storageStatus == QStringLiteral("read_only") || !storageWritable) {
                     reported.message = QStringLiteral("板端事件存储只读或不可写，生产服务可能无法正常写事件，请先处理存储状态");
+                    shouldEmitGlobalError = true;
                 } else {
                     const QJsonObject rkipc = pipeline.value(QStringLiteral("rkipc")).toObject();
                     if (!rkipc.value(QStringLiteral("alive")).toBool(true)) {
                         reported.message = QStringLiteral("板端 rkipc 未运行，RTSP 554 不可用，请启动生产服务");
+                        shouldEmitGlobalError = true;
                     }
                 }
             }
@@ -478,7 +484,9 @@ void DeviceIntegrationController::handlePlaybackError(const ApiError& error)
         reported.message = QStringLiteral("RTSP 首帧超时，应用会继续重连；请检查板端服务、网络和电脑解码压力");
     }
     emit playbackError(reported);
-    emitSafeError(reported);
+    if (shouldEmitGlobalError) {
+        emitSafeError(reported);
+    }
 }
 
 DeviceProfile DeviceIntegrationController::profileFor(const DiscoveredDeviceDto& device,

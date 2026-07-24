@@ -418,6 +418,9 @@ void BoardEvidenceCache::persistFailure(
     EvidenceCacheEntry entry = entryFor(event, status);
     entry.failureCode = error.code;
     persistState(entry);
+    if (status == EvidenceCacheStatus::Missing) {
+        return;
+    }
     emit cacheError(event.identity, error);
 }
 

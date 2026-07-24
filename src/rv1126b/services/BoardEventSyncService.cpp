@@ -18,6 +18,14 @@ bool isEmptyIdentity(const EventIdentity& identity)
     return identity.deviceId.isEmpty() && identity.eventId == 0 && identity.trackId == 0;
 }
 
+bool isMissingRemoteEvent(const ApiError& error)
+{
+    return error.category == ApiErrorCategory::NotFound
+        || error.httpStatus == 404
+        || error.code == QStringLiteral("event_not_found")
+        || error.code == QStringLiteral("detail_not_found");
+}
+
 EventSortKey sortKeyFromSummary(const EventSummaryDto& summary)
 {
     EventSortKey key;
@@ -368,7 +376,7 @@ void BoardEventSyncService::handleNonTerminalEvents(int generation, ApiResult<QV
     pendingDetailRefresh_.reserve(result.value().size());
     for (const VehicleEvent& event : result.value()) {
         if (!isEmptyIdentity(event.identity)) {
-            pendingDetailRefresh_.append(event.identity);
+            pendingDetailRefresh_.append(event);
         }
     }
 
@@ -386,18 +394,18 @@ void BoardEventSyncService::refreshNextDetail(int generation)
         return;
     }
 
-    const EventIdentity identity = pendingDetailRefresh_.takeFirst();
+    const VehicleEvent event = pendingDetailRefresh_.takeFirst();
     apiClient_->getEventDetail(
-        identity,
+        event.identity,
         this,
-        [this, generation, identity](ApiResult<EventDetailDto> result) {
-            handleEventDetail(generation, identity, std::move(result));
+        [this, generation, event](ApiResult<EventDetailDto> result) {
+            handleEventDetail(generation, event, std::move(result));
         });
 }
 
 void BoardEventSyncService::handleEventDetail(
     int generation,
-    const EventIdentity& identity,
+    const VehicleEvent& event,
     ApiResult<EventDetailDto> result)
 {
     if (!isActiveGeneration(generation)) {
@@ -405,6 +413,21 @@ void BoardEventSyncService::handleEventDetail(
     }
 
     if (!result.isSuccess()) {
+        if (isMissingRemoteEvent(result.error())) {
+            VehicleEvent missing = event;
+            missing.ocrStatus.value = OcrStatus::Failed;
+            missing.ocrStatus.rawValue = QStringLiteral("missing");
+            missing.captureStatus = QStringLiteral("missing");
+            missing.captureError = result.error().code;
+            missing.lastUpdatedEpochMs = nowEpochMs();
+            repository_->upsertEvents(
+                {missing},
+                this,
+                [this, generation, identity = missing.identity](ApiResult<void> persistResult) {
+                    handleDetailEventPersisted(generation, identity, std::move(persistResult));
+                });
+            return;
+        }
         reportRecoverableError(generation, result.error());
         refreshNextDetail(generation);
         return;
@@ -412,6 +435,7 @@ void BoardEventSyncService::handleEventDetail(
 
     const qint64 fetchedEpochMs = nowEpochMs();
     const EventDetailDto detailDto = result.value();
+    const EventIdentity& identity = event.identity;
     const EventDetailSnapshot detail = detailFromDto(deviceId_, identity, detailDto, fetchedEpochMs);
     VehicleEvent updatedEvent = eventFromSummary(deviceId_, detailDto.summary, fetchedEpochMs, identity);
     if (detailDto.evidenceRelativeUrl) {

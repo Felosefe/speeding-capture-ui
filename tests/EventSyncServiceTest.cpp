@@ -23,6 +23,7 @@ private slots:
     void initTestCase();
     void pollsPagePersistsEventsAndEmitsSignals();
     void refreshesQueuedEventsWithDetail();
+    void ignoresMissingDetailForStaleNonTerminalEvent();
     void skipsOverlappingPolls();
     void catchUpPaginatesUntilStoredAnchorAndSavesNewHead();
     void retriesAfterTemporaryFailure();
@@ -40,6 +41,17 @@ ApiError makeError(const QString& code)
     error.message = QStringLiteral("test error");
     error.category = ApiErrorCategory::Network;
     error.retryable = true;
+    return error;
+}
+
+ApiError makeNotFoundError(const QString& code)
+{
+    ApiError error;
+    error.httpStatus = 404;
+    error.code = code;
+    error.message = QStringLiteral("test not found");
+    error.category = ApiErrorCategory::NotFound;
+    error.retryable = false;
     return error;
 }
 
@@ -174,7 +186,7 @@ public:
         const bool found = details.contains(identity);
         QTimer::singleShot(0, [completion = std::move(completion), detail, found]() mutable {
             if (!found) {
-                completion(ApiResult<EventDetailDto>::failure(makeError(QStringLiteral("detail_not_found"))));
+                completion(ApiResult<EventDetailDto>::failure(makeNotFoundError(QStringLiteral("event_not_found"))));
                 return;
             }
             completion(ApiResult<EventDetailDto>::success(detail));
@@ -422,6 +434,32 @@ void EventSyncServiceTest::refreshesQueuedEventsWithDetail()
         database.close();
     }
     QSqlDatabase::removeDatabase(connectionName);
+
+    service.stop();
+}
+
+void EventSyncServiceTest::ignoresMissingDetailForStaleNonTerminalEvent()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    SqliteEventRepository repository(databasePath(tempDir));
+    initializeRepository(repository, this);
+
+    FakeBoardApiClient client;
+    client.nextPage = pageWith({makeSummary(203, 9, OcrStatus::Queued)});
+
+    BoardEventSyncService service(QString::fromUtf8(DeviceId), &client, &repository);
+    service.setPollIntervalMs(EventSyncService::MaximumPollIntervalMs);
+    QSignalSpy catchUpSpy(&service, &EventSyncService::initialCatchUpFinished);
+    QSignalSpy errorSpy(&service, &EventSyncService::syncError);
+
+    service.start();
+
+    QTRY_COMPARE(catchUpSpy.size(), 1);
+    QCOMPARE(client.detailCalls, 1);
+    QCOMPARE(errorSpy.size(), 0);
+    QCOMPARE(loadEvents(repository, this).size(), 1);
 
     service.stop();
 }
