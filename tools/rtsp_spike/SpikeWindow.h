@@ -28,7 +28,7 @@ struct RtspSpikeOptions {
     QUrl healthUrl;
     QString outputPath;
     rv1126b::RtspStreamRole initialRole = rv1126b::RtspStreamRole::Main;
-    int openTimeoutMs = 3000;
+    int openTimeoutMs = 15000;
     int durationMs = 30 * 60 * 1000;
     int healthIntervalMs = 5000;
 };

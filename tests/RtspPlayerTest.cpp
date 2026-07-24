@@ -104,7 +104,7 @@ void RtspPlayerTest::defaultTimingIsFrozen()
     const RtspStreamSpec defaultStream;
     const RtspPlayerTiming defaultTiming;
 
-    QCOMPARE(defaultStream.openTimeoutMs, 3000);
+    QCOMPARE(defaultStream.openTimeoutMs, 15000);
     QCOMPARE(defaultTiming.frameStallTimeoutMs, 5000);
     QCOMPARE(defaultTiming.watchdogIntervalMs, 1000);
     QCOMPARE(defaultTiming.reconnectDelaysMs, QVector<int>({1000, 2000, 4000, 8000, 10000}));

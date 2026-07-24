@@ -147,6 +147,7 @@ namespace rv1126b
             }
             retryAttempt_ = 0;
             snapshot_.lastHealthEpochMs = QDateTime::currentMSecsSinceEpoch();
+            snapshot_.lastHealth = health;
             snapshot_.profile.lastOnlineEpochMs = snapshot_.lastHealthEpochMs;
             setState(DeviceSessionState::Online);
             emit healthUpdated(snapshot_.profile.deviceId, health);

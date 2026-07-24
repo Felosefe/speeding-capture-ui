@@ -64,6 +64,7 @@ private:
     QPushButton* saveDetectionButton_ = nullptr;
     LineRegionOverlayWidget* lineOverlay_ = nullptr;
     QWidget* videoOutput_ = nullptr;
+    QWidget* videoHost_ = nullptr;
     rv1126b::IBoardApiClient* boardApi_ = nullptr;
     QString currentDeviceId_;
     std::optional<rv1126b::TriggerModeConfigDto> triggerModeConfig_;

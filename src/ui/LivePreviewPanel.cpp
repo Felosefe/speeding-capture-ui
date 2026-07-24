@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QPushButton>
+#include <QStackedLayout>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -395,21 +396,22 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     if (output) {
         videoOutput_ = output;
         output->setObjectName(QStringLiteral("rtspOutputWidget"));
-        auto* videoHost = new QWidget(this);
-        videoHost->setObjectName(QStringLiteral("rtspOverlayHost"));
-        auto* videoLayout = new QVBoxLayout(videoHost);
+        videoHost_ = new QWidget(this);
+        videoHost_->setObjectName(QStringLiteral("rtspOverlayHost"));
+        auto* videoLayout = new QStackedLayout(videoHost_);
+        videoLayout->setStackingMode(QStackedLayout::StackAll);
         videoLayout->setContentsMargins(0, 0, 0, 0);
         videoLayout->setSpacing(0);
         videoLayout->addWidget(output);
-        lineOverlay_ = new LineRegionOverlayWidget(output);
+        lineOverlay_ = new LineRegionOverlayWidget(videoHost_);
         lineOverlay_->onEdited = [this](const rv1126b::LineRegionSettings& lineRegion) {
             markLineRegionDirty(lineRegion);
         };
-        lineOverlay_->setGeometry(output->rect());
+        videoLayout->addWidget(lineOverlay_);
         lineOverlay_->show();
         lineOverlay_->raise();
-        output->installEventFilter(this);
-        root->addWidget(videoHost, 1);
+        videoHost_->installEventFilter(this);
+        root->addWidget(videoHost_, 1);
     } else {
         auto* unavailable = new QLabel(QStringLiteral("实时视频播放器尚未装配"), this);
         unavailable->setObjectName(QStringLiteral("rtspUnavailableLabel"));
@@ -491,18 +493,18 @@ void LivePreviewPanel::setPlaybackState(rv1126b::RtspPlayerState state)
 
 void LivePreviewPanel::setPlaybackError(const rv1126b::ApiError& error)
 {
-    Q_UNUSED(error)
-    stateLabel_->setText(QStringLiteral("视频播放失败，等待处理"));
+    stateLabel_->setText(error.message.isEmpty()
+                             ? QStringLiteral("视频播放失败，等待重连")
+                             : error.message);
     stateLabel_->setStyleSheet(QStringLiteral("color: #b42318;"));
 }
 
 bool LivePreviewPanel::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == videoOutput_ && lineOverlay_
+    if (watched == videoHost_ && lineOverlay_
         && (event->type() == QEvent::Resize
             || event->type() == QEvent::Show
             || event->type() == QEvent::LayoutRequest)) {
-        lineOverlay_->setGeometry(videoOutput_->rect());
         lineOverlay_->raise();
     }
     return QWidget::eventFilter(watched, event);

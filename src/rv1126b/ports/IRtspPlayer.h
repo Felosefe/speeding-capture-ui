@@ -30,7 +30,7 @@ struct RtspStreamSpec {
     QString deviceId;
     QUrl url;
     RtspStreamRole role = RtspStreamRole::Sub;
-    int openTimeoutMs = 3000;
+    int openTimeoutMs = 15000;
 };
 
 class IRtspPlayer : public QObject

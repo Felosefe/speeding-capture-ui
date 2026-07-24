@@ -227,6 +227,8 @@ private slots:
     void existingCredentialCanBeReused();
     void onlineSessionOpensSubStreamAndSupportsSwitching();
     void degradedHttpDoesNotStopVideoAndRtspFailureDoesNotChangeSession();
+    void rtspFailureReportsGenericStorageProblemFromLastHealth();
+    void rtspFailureReportsStoppedRkipcFromLastHealth();
     void authenticationFailureStopsVideoAndPromptsOnce();
     void selectingAnotherDeviceStopsOldVideoBeforeOpeningNewVideo();
     void disconnectAndShutdownReleaseResources();
@@ -379,6 +381,83 @@ void DeviceIntegrationControllerTest::degradedHttpDoesNotStopVideoAndRtspFailure
     QCOMPARE(sessionSpy.size(), 2);
     QCOMPARE(sessionSpy.last().at(0).value<DeviceSessionSnapshot>().state,
              DeviceSessionState::Degraded);
+}
+
+void DeviceIntegrationControllerTest::rtspFailureReportsGenericStorageProblemFromLastHealth()
+{
+    FakeDiscoveryService discoveryService;
+    FakeFleetService fleet;
+    FakeSecretStore secrets;
+    FakeRtspPlayer player;
+    DeviceIntegrationController controller({&discoveryService, &fleet, &secrets, &player});
+    QSignalSpy playbackErrorSpy(&controller, &DeviceIntegrationController::playbackError);
+
+    const RequestId scanId = controller.startScan();
+    discoveryService.sendDevice(scanId, discovered());
+    controller.connectDiscoveredDevice(
+        QStringLiteral("device-a"), SecretValue(QByteArrayLiteral("token")));
+
+    DeviceSessionSnapshot online = snapshot(fleet.lastProfile, DeviceSessionState::Online);
+    HealthDto health;
+    health.deviceId = fleet.lastProfile.deviceId;
+    health.pipelineHealthAvailable = true;
+    health.pipeline.insert(QStringLiteral("storage"), QJsonObject{
+        {QStringLiteral("status"), QStringLiteral("read_only")},
+        {QStringLiteral("writable"), false},
+    });
+    online.lastHealth = health;
+    fleet.sendSession(online);
+
+    ApiError rtspError;
+    rtspError.code = QStringLiteral("rtsp_open_timeout");
+    rtspError.category = ApiErrorCategory::Network;
+    rtspError.retryable = true;
+    player.fail(rtspError);
+
+    QCOMPARE(playbackErrorSpy.size(), 1);
+    const ApiError reported = playbackErrorSpy.last().at(0).value<ApiError>();
+    QVERIFY(reported.message.contains(QStringLiteral("事件存储")));
+    QVERIFY(!reported.message.contains(QStringLiteral("TF")));
+}
+
+void DeviceIntegrationControllerTest::rtspFailureReportsStoppedRkipcFromLastHealth()
+{
+    FakeDiscoveryService discoveryService;
+    FakeFleetService fleet;
+    FakeSecretStore secrets;
+    FakeRtspPlayer player;
+    DeviceIntegrationController controller({&discoveryService, &fleet, &secrets, &player});
+    QSignalSpy playbackErrorSpy(&controller, &DeviceIntegrationController::playbackError);
+
+    const RequestId scanId = controller.startScan();
+    discoveryService.sendDevice(scanId, discovered());
+    controller.connectDiscoveredDevice(
+        QStringLiteral("device-a"), SecretValue(QByteArrayLiteral("token")));
+
+    DeviceSessionSnapshot online = snapshot(fleet.lastProfile, DeviceSessionState::Online);
+    HealthDto health;
+    health.deviceId = fleet.lastProfile.deviceId;
+    health.pipelineHealthAvailable = true;
+    health.pipeline.insert(QStringLiteral("storage"), QJsonObject{
+        {QStringLiteral("status"), QStringLiteral("healthy")},
+        {QStringLiteral("writable"), true},
+    });
+    health.pipeline.insert(QStringLiteral("rkipc"), QJsonObject{
+        {QStringLiteral("alive"), false},
+    });
+    online.lastHealth = health;
+    fleet.sendSession(online);
+
+    ApiError rtspError;
+    rtspError.code = QStringLiteral("rtsp_open_timeout");
+    rtspError.category = ApiErrorCategory::Network;
+    rtspError.retryable = true;
+    player.fail(rtspError);
+
+    QCOMPARE(playbackErrorSpy.size(), 1);
+    const ApiError reported = playbackErrorSpy.last().at(0).value<ApiError>();
+    QVERIFY(reported.message.contains(QStringLiteral("rkipc")));
+    QVERIFY(reported.message.contains(QStringLiteral("RTSP 554")));
 }
 
 void DeviceIntegrationControllerTest::authenticationFailureStopsVideoAndPromptsOnce()

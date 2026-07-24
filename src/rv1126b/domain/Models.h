@@ -55,6 +55,7 @@ struct DeviceSessionSnapshot {
     DeviceProfile profile;
     DeviceSessionState state = DeviceSessionState::Disconnected;
     qint64 lastHealthEpochMs = 0;
+    std::optional<HealthDto> lastHealth;
     std::optional<ApiError> lastError;
 };
 

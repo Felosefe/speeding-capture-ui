@@ -5,9 +5,12 @@
 #include <QMediaPlayer>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QPlaybackOptions>
 #include <QVideoFrame>
 #include <QVideoSink>
 #include <QWidget>
+
+#include <chrono>
 
 namespace {
 
@@ -76,6 +79,12 @@ QtMediaPlaybackBackend::~QtMediaPlaybackBackend()
 void QtMediaPlaybackBackend::play(const QUrl& url, quint64 attemptToken)
 {
     stop();
+
+    QPlaybackOptions options;
+    options.setPlaybackIntent(QPlaybackOptions::PlaybackIntent::LowLatencyStreaming);
+    options.setProbeSize(64 * 1024);
+    options.setNetworkTimeout(std::chrono::milliseconds(5000));
+    mediaPlayer_->setPlaybackOptions(options);
 
     attemptConnections_.append(connect(
         videoSink_, &QVideoSink::videoFrameChanged, this,
@@ -148,10 +157,15 @@ void QtMediaPlaybackBackend::handleVideoFrame(const QVideoFrame& frame, quint64 
     if (!frame.isValid()) {
         return;
     }
-    if (videoWidget_) {
-        static_cast<VideoFrameWidget*>(videoWidget_.data())->setFrame(frame.toImage());
-    }
     emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
+    if (!videoWidget_) {
+        return;
+    }
+    if (renderThrottle_.isValid() && renderThrottle_.elapsed() < 33) {
+        return;
+    }
+    renderThrottle_.restart();
+    static_cast<VideoFrameWidget*>(videoWidget_.data())->setFrame(frame.toImage());
 }
 
 void QtMediaPlaybackBackend::disconnectAttemptSignals()

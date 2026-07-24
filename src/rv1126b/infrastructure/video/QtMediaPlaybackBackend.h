@@ -2,6 +2,7 @@
 
 #include "IMediaPlaybackBackend.h"
 
+#include <QElapsedTimer>
 #include <QMetaObject>
 #include <QPointer>
 #include <QVector>
@@ -32,6 +33,7 @@ private:
     QMediaPlayer* mediaPlayer_ = nullptr;
     QVideoSink* videoSink_ = nullptr;
     QPointer<QWidget> videoWidget_;
+    QElapsedTimer renderThrottle_;
     QVector<QMetaObject::Connection> attemptConnections_;
 };
 

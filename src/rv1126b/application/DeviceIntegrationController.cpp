@@ -446,8 +446,39 @@ void DeviceIntegrationController::handleFleetError(const ApiError& error)
 
 void DeviceIntegrationController::handlePlaybackError(const ApiError& error)
 {
-    emit playbackError(error);
-    emitSafeError(error);
+    ApiError reported = error;
+    const QString deviceId = playbackDeviceId_.isEmpty() ? selectedVideoDeviceId_ : playbackDeviceId_;
+    const auto snapshot = sessionFor(deviceId);
+    if (snapshot) {
+        if (snapshot->state != DeviceSessionState::Online) {
+            reported.message = QStringLiteral("板端当前未在线，视频服务可能尚未启动");
+        } else if (snapshot->lastHealth) {
+            const HealthDto& health = *snapshot->lastHealth;
+            if (!health.pipelineHealthAvailable) {
+                reported.message = QStringLiteral("板端健康信息不可用，请检查 app_api 和生产服务状态");
+            } else {
+                const QJsonObject pipeline = health.pipeline;
+                const QJsonObject storage = pipeline.value(QStringLiteral("storage")).toObject();
+                const QString storageStatus = storage.value(QStringLiteral("status")).toString();
+                const bool storageWritable = storage.value(QStringLiteral("writable")).toBool(true);
+                if (storageStatus == QStringLiteral("read_only") || !storageWritable) {
+                    reported.message = QStringLiteral("板端事件存储只读或不可写，生产服务可能无法正常写事件，请先处理存储状态");
+                } else {
+                    const QJsonObject rkipc = pipeline.value(QStringLiteral("rkipc")).toObject();
+                    if (!rkipc.value(QStringLiteral("alive")).toBool(true)) {
+                        reported.message = QStringLiteral("板端 rkipc 未运行，RTSP 554 不可用，请启动生产服务");
+                    }
+                }
+            }
+        }
+    }
+    if (reported.message.isEmpty()
+        && (reported.category == ApiErrorCategory::Network
+            || reported.category == ApiErrorCategory::Temporary)) {
+        reported.message = QStringLiteral("RTSP 首帧超时，应用会继续重连；请检查板端服务、网络和电脑解码压力");
+    }
+    emit playbackError(reported);
+    emitSafeError(reported);
 }
 
 DeviceProfile DeviceIntegrationController::profileFor(const DiscoveredDeviceDto& device,

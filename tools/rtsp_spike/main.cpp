@@ -42,6 +42,9 @@ QUrl parseRtspUrl(const QString& value, QString* error)
 int main(int argc, char* argv[])
 {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
+    if (qgetenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES").isEmpty()) {
+        qputenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "d3d11va,dxva2");
+    }
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Rv1126bRtspSpike"));
     QCoreApplication::setApplicationVersion(QStringLiteral("1.0"));
@@ -56,7 +59,7 @@ int main(int argc, char* argv[])
     parser.addOption({QStringLiteral("health-url"), QStringLiteral("并行 health URL；Token 从 RV1126B_BEARER_TOKEN 读取"), QStringLiteral("url")});
     parser.addOption({QStringLiteral("start"), QStringLiteral("启动时播放 main 或 sub"), QStringLiteral("role"), QStringLiteral("main")});
     parser.addOption({QStringLiteral("duration-minutes"), QStringLiteral("自动测试时长；0 表示手工结束"), QStringLiteral("minutes"), QStringLiteral("30")});
-    parser.addOption({QStringLiteral("open-timeout-ms"), QStringLiteral("首帧打开超时"), QStringLiteral("milliseconds"), QStringLiteral("3000")});
+    parser.addOption({QStringLiteral("open-timeout-ms"), QStringLiteral("首帧打开超时"), QStringLiteral("milliseconds"), QStringLiteral("15000")});
     parser.addOption({QStringLiteral("health-interval-ms"), QStringLiteral("health 轮询间隔"), QStringLiteral("milliseconds"), QStringLiteral("5000")});
     parser.addOption({QStringLiteral("output"), QStringLiteral("脱敏 CSV 结果文件"), QStringLiteral("path")});
     parser.process(app);
