@@ -23,6 +23,7 @@ private slots:
     void initTestCase();
     void pollsPagePersistsEventsAndEmitsSignals();
     void refreshesQueuedEventsWithDetail();
+    void usesSnapshotImageWhenEvidenceImageIsMissing();
     void ignoresMissingDetailForStaleNonTerminalEvent();
     void skipsOverlappingPolls();
     void catchUpPaginatesUntilStoredAnchorAndSavesNewHead();
@@ -434,6 +435,49 @@ void EventSyncServiceTest::refreshesQueuedEventsWithDetail()
         database.close();
     }
     QSqlDatabase::removeDatabase(connectionName);
+
+    service.stop();
+}
+
+void EventSyncServiceTest::usesSnapshotImageWhenEvidenceImageIsMissing()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    SqliteEventRepository repository(databasePath(tempDir));
+    initializeRepository(repository, this);
+
+    EventSummaryDto queued = makeSummary(204, 9, OcrStatus::Queued);
+    queued.evidenceAvailable = false;
+    queued.evidenceRelativeUrl.clear();
+    queued.rawJson.insert(QStringLiteral("evidence_url"), QJsonValue());
+    queued.rawJson.insert(QStringLiteral("snapshot_url"), QStringLiteral("/api/v1/events/204/9/files/snapshot"));
+
+    EventDetailDto detail = detailFor(queued);
+    detail.summary = queued;
+    detail.images.insert(QStringLiteral("evidence"), QJsonValue());
+    detail.images.insert(QStringLiteral("snapshot"), QStringLiteral("/api/v1/events/204/9/files/snapshot"));
+    detail.evidenceRelativeUrl = std::nullopt;
+
+    EventIdentity identity {QString::fromUtf8(DeviceId), 204, 9};
+    FakeBoardApiClient client;
+    client.nextPage = pageWith({queued});
+    client.details.insert(identity, detail);
+
+    BoardEventSyncService service(QString::fromUtf8(DeviceId), &client, &repository);
+    service.setPollIntervalMs(EventSyncService::MaximumPollIntervalMs);
+    QSignalSpy catchUpSpy(&service, &EventSyncService::initialCatchUpFinished);
+    QSignalSpy errorSpy(&service, &EventSyncService::syncError);
+
+    service.start();
+
+    QTRY_COMPARE(catchUpSpy.size(), 1);
+    QCOMPARE(errorSpy.size(), 0);
+
+    const QVector<VehicleEvent> rows = loadEvents(repository, this);
+    QCOMPARE(rows.size(), 1);
+    QVERIFY(rows.first().evidenceAvailable);
+    QCOMPARE(rows.first().evidenceRelativeUrl, QStringLiteral("/api/v1/events/204/9/files/snapshot"));
 
     service.stop();
 }

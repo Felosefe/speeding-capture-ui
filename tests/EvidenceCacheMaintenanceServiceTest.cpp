@@ -26,14 +26,17 @@ QString writeFile(const QString& path, int bytes, int ageDays)
 {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile file(path);
-    Q_ASSERT(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    const bool opened = file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    Q_ASSERT(opened);
     file.write(QByteArray(bytes, 'x'));
     file.close();
 
     const QDateTime timestamp = QDateTime::currentDateTime().addDays(-ageDays);
     QFile timestampFile(path);
-    Q_ASSERT(timestampFile.open(QIODevice::ReadWrite));
-    Q_ASSERT(timestampFile.setFileTime(timestamp, QFileDevice::FileModificationTime));
+    const bool timestampOpened = timestampFile.open(QIODevice::ReadWrite);
+    Q_ASSERT(timestampOpened);
+    const bool timestampSet = timestampFile.setFileTime(timestamp, QFileDevice::FileModificationTime);
+    Q_ASSERT(timestampSet);
     timestampFile.close();
     return path;
 }

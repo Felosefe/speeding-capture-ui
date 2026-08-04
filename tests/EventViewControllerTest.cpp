@@ -136,12 +136,18 @@ public:
     bool isRunning() const override { return running_; }
     void setPollIntervalMs(int value) override { interval_ = value; }
     int pollIntervalMs() const override { return interval_; }
+    void pollNow() override { ++pollNowCount; }
+    void syncAllExisting() override { ++syncAllCount; }
+    void markCurrentHeadAsSynced() override { ++markCurrentCount; }
     void change(const EventIdentity& identity) { emit eventChanged(identity); }
     QString id_;
     bool running_ = false;
     int interval_ = DefaultPollIntervalMs;
     int startCount = 0;
     int stopCount = 0;
+    int pollNowCount = 0;
+    int syncAllCount = 0;
+    int markCurrentCount = 0;
 };
 
 class EventViewControllerTest final : public QObject

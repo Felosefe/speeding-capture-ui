@@ -176,8 +176,8 @@ void BoardFtpServiceTest::savesConfigurationThenEnablesNewEvents()
     QTRY_COMPARE_WITH_TIMEOUT(client.putControlCount, 1, 500);
     QCOMPARE(client.lastControlUpdate.expectedRevision, QStringLiteral("revision-2"));
     QVERIFY(client.lastControlUpdate.enabled);
-    QCOMPARE(client.lastControlUpdate.scope.value, FtpControlScope::NewEventsOnly);
-    QCOMPARE(client.lastControlUpdate.scope.rawValue, QStringLiteral("new_events_only"));
+    QCOMPARE(client.lastControlUpdate.scope.value, FtpControlScope::AllExisting);
+    QCOMPARE(client.lastControlUpdate.scope.rawValue, QStringLiteral("all_existing"));
     client.respondControl(ApiResult<FtpControlDto>::success(FtpControlDto {}));
 
     QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 500);

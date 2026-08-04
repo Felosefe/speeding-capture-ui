@@ -480,15 +480,16 @@ qt_add_executable(DeviceOperationsUiTest
     tests/DeviceOperationsUiTest.cpp
     src/rv1126b/application/DeviceOperationsController.cpp
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/rv1126b/application/DeviceOperationsController.h
     src/rv1126b/core/Result.h
     src/rv1126b/core/ValueTypes.h
     src/rv1126b/domain/Models.h
     src/rv1126b/ports/IBoardApiClient.h
     src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/EventSyncService.h
     src/rv1126b/services/FtpService.h
-    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
-    src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/ui/Rv1126bDeviceManagementDialog.cpp
     src/ui/Rv1126bDeviceManagementDialog.h
 )
@@ -875,6 +876,8 @@ qt_add_executable(ApplicationRuntimeTest
     src/rv1126b/services/BoardEvidenceCache.cpp
     src/rv1126b/services/BoardFtpService.cpp
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
+    src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/rv1126b/services/EvidenceCacheMaintenanceService.cpp
     src/rv1126b/services/DeviceDiscoveryService.h
     src/rv1126b/services/DeviceFleetService.h

@@ -147,8 +147,8 @@ void BoardFtpService::handleConfigSaved(const RequestId& requestId, ApiResult<Ft
     FtpControlUpdate control;
     control.expectedRevision = result.value().revision;
     control.enabled = true;
-    control.scope.value = FtpControlScope::NewEventsOnly;
-    control.scope.rawValue = QStringLiteral("new_events_only");
+    control.scope.value = FtpControlScope::AllExisting;
+    control.scope.rawValue = QStringLiteral("all_existing");
     const RequestId innerRequestId = apiClient_->putFtpControl(
         control,
         this,

@@ -29,12 +29,15 @@ public:
     bool isRunning() const override;
     void setPollIntervalMs(int intervalMs) override;
     int pollIntervalMs() const override;
-
-    void pollNow();
+    void pollNow() override;
+    void syncAllExisting() override;
+    void markCurrentHeadAsSynced() override;
 
 private:
     void beginPoll();
     void handleSyncAnchorLoaded(int generation, ApiResult<std::optional<SyncAnchor>> result);
+    void handleCurrentHeadPage(int generation, ApiResult<EventPageDto> result);
+    void handleCurrentHeadAnchorSaved(int generation, ApiResult<void> result);
     void requestEventPage(int generation, const std::optional<QString>& cursor);
     void handleEventPage(int generation, ApiResult<EventPageDto> result);
     void handlePagePersisted(
@@ -72,6 +75,9 @@ private:
     bool running_ = false;
     bool syncInFlight_ = false;
     bool initialCatchUpPending_ = true;
+    bool forceFullCatchUp_ = false;
+    bool markCurrentHeadInFlight_ = false;
+    bool manualFullSyncInFlight_ = false;
     std::optional<SyncAnchor> loadedAnchor_;
     std::optional<EventSortKey> cycleHead_;
     QVector<VehicleEvent> pendingDetailRefresh_;

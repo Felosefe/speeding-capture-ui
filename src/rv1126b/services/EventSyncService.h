@@ -33,11 +33,15 @@ public:
     virtual bool isRunning() const = 0;
     virtual void setPollIntervalMs(int intervalMs) = 0;
     virtual int pollIntervalMs() const = 0;
+    virtual void pollNow() = 0;
+    virtual void syncAllExisting() = 0;
+    virtual void markCurrentHeadAsSynced() = 0;
 
 signals:
     void eventChanged(const rv1126b::EventIdentity& identity);
     void initialCatchUpFinished(const QString& deviceId);
     void syncError(const QString& deviceId, const rv1126b::ApiError& error);
+    void syncActionFinished(const QString& deviceId, const QString& action, const QString& message);
 };
 
 } // namespace rv1126b

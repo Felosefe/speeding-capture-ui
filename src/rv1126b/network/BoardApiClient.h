@@ -44,6 +44,11 @@ public:
         const QString& partFilePath,
         QObject* context,
         ApiCompletion<EvidenceDownloadResult> completion) override;
+    RequestId downloadFileToPartFile(
+        const QString& relativeUrl,
+        const QString& partFilePath,
+        QObject* context,
+        ApiCompletion<EvidenceDownloadResult> completion) override;
     RequestId putClientAck(
         const EventIdentity& identity,
         const ClientAckCreate& request,
@@ -58,6 +63,9 @@ public:
     RequestId getLineRegionConfig(QObject* context, ApiCompletion<LineRegionConfigDto> completion) override;
     RequestId putLineRegionConfig(const LineRegionUpdate& update, QObject* context, ApiCompletion<LineRegionConfigDto> completion) override;
     RequestId applyRuntimeConfig(const RuntimeApplyUpdate& update, QObject* context, ApiCompletion<RuntimeApplyDto> completion) override;
+    RequestId getIspConfig(QObject* context, ApiCompletion<QJsonObject> completion) override;
+    RequestId saveCurrentIspConfig(QObject* context, ApiCompletion<QJsonObject> completion) override;
+    RequestId clearIspConfig(QObject* context, ApiCompletion<QJsonObject> completion) override;
     RequestId getFtpConfig(QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
     RequestId putFtpConfig(const FtpConfigUpdate& update, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
     RequestId rollbackFtpConfig(const QString& expectedRevision, QObject* context, ApiCompletion<FtpConfigSnapshotDto> completion) override;
@@ -93,12 +101,22 @@ private:
         const QString& partFilePath,
         QObject* context,
         ApiCompletion<EvidenceDownloadResult> completion);
+    RequestId startFileRequest(
+        const QUrl& url,
+        const QString& partFilePath,
+        const QByteArray& acceptHeader,
+        const QString& requiredContentTypePrefix,
+        QObject* context,
+        ApiCompletion<EvidenceDownloadResult> completion);
     QUrl endpointUrl(const QString& relativePath, ApiError* error) const;
     QUrl eventUrl(const EventIdentity& identity, const QString& suffix, ApiError* error) const;
     bool applyAuthorization(QNetworkRequest* request, ApiError* error) const;
     QNetworkReply* issueRequest(QNetworkAccessManager::Operation operation, const QNetworkRequest& request, const QByteArray& body);
     void completeJsonRequest(const RequestId& requestId);
-    void completeEvidenceRequest(const RequestId& requestId, const QString& partFilePath);
+    void completeEvidenceRequest(
+        const RequestId& requestId,
+        const QString& partFilePath,
+        const QString& requiredContentTypePrefix);
     void stopConnectTimer(const RequestId& requestId);
     void failPending(const RequestId& requestId, const ApiError& error, bool abortReply);
     ApiError localError(const QString& code, const QString& message, ApiErrorCategory category, bool retryable = false) const;

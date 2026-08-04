@@ -43,6 +43,9 @@ public:
     RequestId putEvidenceConfig(const EvidenceConfigUpdate& u, QObject*, ApiCompletion<EvidenceConfigDto> c) override { evidence.evidence = u; return done(std::move(c), ApiResult<EvidenceConfigDto>::success(evidence)); }
     RequestId getTime(QObject*, ApiCompletion<TimeStatusDto> c) override { return done(std::move(c), ApiResult<TimeStatusDto>::success(time)); }
     RequestId putTime(const TimeUpdate& u, QObject*, ApiCompletion<TimeStatusDto> c) override { time.time.epochMs = u.utcEpochMs; return done(std::move(c), ApiResult<TimeStatusDto>::success(time)); }
+    RequestId getIspConfig(QObject*, ApiCompletion<QJsonObject> c) override { return done(std::move(c), ApiResult<QJsonObject>::success({})); }
+    RequestId saveCurrentIspConfig(QObject*, ApiCompletion<QJsonObject> c) override { return done(std::move(c), ApiResult<QJsonObject>::success({})); }
+    RequestId clearIspConfig(QObject*, ApiCompletion<QJsonObject> c) override { return done(std::move(c), ApiResult<QJsonObject>::success({})); }
     RequestId getFtpConfig(QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success({})); }
     RequestId putFtpConfig(const FtpConfigUpdate&, QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success({})); }
     RequestId rollbackFtpConfig(const QString&, QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success({})); }
@@ -153,13 +156,13 @@ class DeviceOperationsUiTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void showsFourPagesTimeWarningAndMixedTaskTargets();
+    void showsManagementPagesTimeWarningAndMixedTaskTargets();
     void enforcesTargetLimitAndClearsReplacementPassword();
     void confirmsRevisionConflictAndResubmits();
     void startsEmbeddedReceiverAndSavesUniqueTargetId();
 };
 
-void DeviceOperationsUiTest::showsFourPagesTimeWarningAndMixedTaskTargets()
+void DeviceOperationsUiTest::showsManagementPagesTimeWarningAndMixedTaskTargets()
 {
     UiBoard board;
     UiFtp ftp;
@@ -169,14 +172,14 @@ void DeviceOperationsUiTest::showsFourPagesTimeWarningAndMixedTaskTargets()
     Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller);
     auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("deviceOperationsTabs"));
     QVERIFY(tabs);
-    QCOMPARE(tabs->count(), 4);
+    QCOMPARE(tabs->count(), 6);
     QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("siteNameEdit"))->text(), QStringLiteral("测试点位"));
     auto* quality = dialog.findChild<QLabel*>(QStringLiteral("timeQualityLabel"));
     QVERIFY(quality->text().contains(QStringLiteral("不可作为可靠 UTC")));
     QVERIFY(quality->styleSheet().contains(QStringLiteral("b00020")));
     QVERIFY(!dialog.findChild<QPushButton*>(QStringLiteral("syncUtcButton"))->isEnabled());
 
-    tabs->setCurrentIndex(3);
+    tabs->setCurrentIndex(5);
     auto* tasks = dialog.findChild<QTableWidget*>(QStringLiteral("ftpTaskTable"));
     QCOMPARE(tasks->rowCount(), 1);
     tasks->selectRow(0);
@@ -239,7 +242,7 @@ void DeviceOperationsUiTest::confirmsRevisionConflictAndResubmits()
     QCOMPARE(ftp.saveCount, 2);
     QCOMPARE(ftp.lastUpdate.expectedRevision, QStringLiteral("remote-revision"));
     QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("ftpStatusLabel"))->text()
-                .contains(QStringLiteral("new_events_only")));
+                .contains(QStringLiteral("all_existing")));
 }
 
 void DeviceOperationsUiTest::startsEmbeddedReceiverAndSavesUniqueTargetId()

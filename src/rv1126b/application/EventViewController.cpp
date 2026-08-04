@@ -1,4 +1,4 @@
-#include "EventViewController.h"
+﻿#include "EventViewController.h"
 
 #include <QDir>
 #include <QFile>
@@ -57,6 +57,11 @@ QString ocrStatusText(const WireEnum<OcrStatus>& status)
     case OcrStatus::Unknown:
     default: return QStringLiteral("unknown");
     }
+}
+
+bool sameRemoteImageUrl(const QString& left, const QString& right)
+{
+    return left.trimmed() == right.trimmed();
 }
 
 } // namespace
@@ -245,7 +250,8 @@ void EventViewController::requestEvidence(const VehicleEvent& event)
             }
             if (result.value().has_value()
                 && result.value()->status == EvidenceCacheStatus::Available
-                && QFileInfo::exists(result.value()->localFilePath)) {
+                && QFileInfo::exists(result.value()->localFilePath)
+                && sameRemoteImageUrl(result.value()->remoteRelativeUrl, event.evidenceRelativeUrl)) {
                 emit evidenceChanged(*result.value());
                 return;
             }

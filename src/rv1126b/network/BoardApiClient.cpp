@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QNetworkRequest>
 #include <QUrlQuery>
 
@@ -29,6 +31,20 @@ bool sameOrigin(const QUrl& left, const QUrl& right)
 QString contentType(QNetworkReply* reply)
 {
     return reply->header(QNetworkRequest::ContentTypeHeader).toString().toLower();
+}
+
+ApiResult<QJsonObject> parseJsonObjectPayload(const QByteArray& payload)
+{
+    QJsonParseError parseError {};
+    const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        ApiError error;
+        error.code = QStringLiteral("invalid_json");
+        error.message = QStringLiteral("Board returned invalid JSON.");
+        error.category = ApiErrorCategory::Protocol;
+        return ApiResult<QJsonObject>::failure(std::move(error));
+    }
+    return ApiResult<QJsonObject>::success(document.object());
 }
 
 } // namespace
@@ -116,6 +132,28 @@ RequestId BoardApiClient::downloadEvidenceToPartFile(
         : endpointUrl(evidenceRelativeUrl, &error);
     if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
     return startEvidenceRequest(url, partFilePath, context, std::move(completion));
+}
+
+RequestId BoardApiClient::downloadFileToPartFile(
+    const QString& relativeUrl,
+    const QString& partFilePath,
+    QObject* context,
+    ApiCompletion<EvidenceDownloadResult> completion)
+{
+    if (partFilePath.isEmpty()) {
+        return returnTypedError(context, std::move(completion), localError(
+            QStringLiteral("rv1126b.api.invalid_part_path"), QStringLiteral("Download part path is required."), ApiErrorCategory::Validation));
+    }
+    ApiError error;
+    const QUrl url = endpointUrl(relativeUrl, &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startFileRequest(
+        url,
+        partFilePath,
+        QByteArrayLiteral("*/*"),
+        QString(),
+        context,
+        std::move(completion));
 }
 
 RequestId BoardApiClient::putClientAck(
@@ -250,6 +288,37 @@ RequestId BoardApiClient::applyRuntimeConfig(
     if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
     return startDecodedJson(QNetworkAccessManager::PostOperation, url, body.value(), context, std::move(completion),
         [this](const QByteArray& payload) { return codec_->parseRuntimeApply(payload); },
+        ConfigApplyFirstResponseTimeoutMs,
+        ConfigApplyRequestTimeoutMs);
+}
+
+RequestId BoardApiClient::getIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/isp"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::GetOperation, url, {}, context, std::move(completion),
+        [](const QByteArray& payload) { return parseJsonObjectPayload(payload); });
+}
+
+RequestId BoardApiClient::saveCurrentIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/isp/save-current"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PostOperation, url, {}, context, std::move(completion),
+        [](const QByteArray& payload) { return parseJsonObjectPayload(payload); },
+        ConfigApplyFirstResponseTimeoutMs,
+        ConfigApplyRequestTimeoutMs);
+}
+
+RequestId BoardApiClient::clearIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/isp/clear"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PostOperation, url, {}, context, std::move(completion),
+        [](const QByteArray& payload) { return parseJsonObjectPayload(payload); },
         ConfigApplyFirstResponseTimeoutMs,
         ConfigApplyRequestTimeoutMs);
 }
@@ -465,6 +534,23 @@ RequestId BoardApiClient::startEvidenceRequest(
     QObject* context,
     ApiCompletion<EvidenceDownloadResult> completion)
 {
+    return startFileRequest(
+        url,
+        partFilePath,
+        QByteArrayLiteral("image/jpeg"),
+        QStringLiteral("image/jpeg"),
+        context,
+        std::move(completion));
+}
+
+RequestId BoardApiClient::startFileRequest(
+    const QUrl& url,
+    const QString& partFilePath,
+    const QByteArray& acceptHeader,
+    const QString& requiredContentTypePrefix,
+    QObject* context,
+    ApiCompletion<EvidenceDownloadResult> completion)
+{
     const RequestId requestId = RequestId::createUuid();
     if (!codec_ || !secretStore_) {
         queueCompletion(context, std::move(completion), ApiResult<EvidenceDownloadResult>::failure(localError(
@@ -478,7 +564,7 @@ RequestId BoardApiClient::startEvidenceRequest(
     }
 
     QNetworkRequest request(url);
-    request.setRawHeader("Accept", "image/jpeg");
+    request.setRawHeader("Accept", acceptHeader);
     request.setTransferTimeout(EvidenceRequestTimeoutMs);
     ApiError authorizationError;
     if (!applyAuthorization(&request, &authorizationError)) {
@@ -506,7 +592,9 @@ RequestId BoardApiClient::startEvidenceRequest(
             QStringLiteral("network_connect_timeout"), QStringLiteral("Board connection timed out."), ApiErrorCategory::Network, true), true);
     });
     connect(reply, &QNetworkReply::metaDataChanged, this, [this, requestId] { stopConnectTimer(requestId); });
-    connect(reply, &QNetworkReply::finished, this, [this, requestId, partFilePath] { completeEvidenceRequest(requestId, partFilePath); });
+    connect(reply, &QNetworkReply::finished, this, [this, requestId, partFilePath, requiredContentTypePrefix] {
+        completeEvidenceRequest(requestId, partFilePath, requiredContentTypePrefix);
+    });
     if (context) {
         connect(context, &QObject::destroyed, this, [this, requestId] {
             const auto it = pendingRequests_.find(requestId);
@@ -621,7 +709,10 @@ void BoardApiClient::completeJsonRequest(const RequestId& requestId)
     reply->deleteLater();
 }
 
-void BoardApiClient::completeEvidenceRequest(const RequestId& requestId, const QString& partFilePath)
+void BoardApiClient::completeEvidenceRequest(
+    const RequestId& requestId,
+    const QString& partFilePath,
+    const QString& requiredContentTypePrefix)
 {
     const auto it = pendingRequests_.find(requestId);
     if (it == pendingRequests_.end()) return;
@@ -648,8 +739,9 @@ void BoardApiClient::completeEvidenceRequest(const RequestId& requestId, const Q
         reply->deleteLater();
         return;
     }
-    if (!contentType(reply).startsWith(QStringLiteral("image/jpeg"))) {
-        pending.fail(localError(QStringLiteral("invalid_content_type"), QStringLiteral("Expected JPEG evidence response."), ApiErrorCategory::Protocol));
+    if (!requiredContentTypePrefix.isEmpty()
+        && !contentType(reply).startsWith(requiredContentTypePrefix)) {
+        pending.fail(localError(QStringLiteral("invalid_content_type"), QStringLiteral("Unexpected download content type."), ApiErrorCategory::Protocol));
         reply->deleteLater();
         return;
     }

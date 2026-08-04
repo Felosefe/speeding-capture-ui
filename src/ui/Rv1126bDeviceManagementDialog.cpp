@@ -1,6 +1,8 @@
 #include "Rv1126bDeviceManagementDialog.h"
 
+#include "../rv1126b/ports/IBoardApiClient.h"
 #include "../rv1126b/services/EmbeddedFtpReceiveServer.h"
+#include "../rv1126b/services/EventSyncService.h"
 
 #include <QAbstractItemView>
 #include <QCheckBox>
@@ -9,7 +11,9 @@
 #include <QDateTimeEdit>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -22,11 +26,14 @@
 #include <QMessageBox>
 #include <QNetworkInterface>
 #include <QPushButton>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTextStream>
 #include <QTimer>
 #include <QTimeZone>
 #include <QUuid>
@@ -76,6 +83,52 @@ QString epochText(qint64 epochMs, Qt::TimeSpec spec)
     return value.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz t"));
 }
 
+QString csvEscape(QString value)
+{
+    value.replace(QStringLiteral("\""), QStringLiteral("\"\""));
+    if (value.contains(QLatin1Char(',')) || value.contains(QLatin1Char('"'))
+        || value.contains(QLatin1Char('\n')) || value.contains(QLatin1Char('\r'))) {
+        return QStringLiteral("\"%1\"").arg(value);
+    }
+    return value;
+}
+
+QString safeSegment(QString value, const QString& fallback)
+{
+    value = value.trimmed();
+    if (value.isEmpty()) value = fallback;
+    static const QRegularExpression invalid(QStringLiteral(R"([<>:"/\\|?*\x00-\x1f])"));
+    value.replace(invalid, QStringLiteral("_"));
+    value.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral("_"));
+    while (value.contains(QStringLiteral("__"))) value.replace(QStringLiteral("__"), QStringLiteral("_"));
+    value = value.left(96).trimmed();
+    return value.isEmpty() ? fallback : value;
+}
+
+QString jsonString(const QJsonObject& object, const QString& key, const QString& fallback = QString())
+{
+    const QJsonValue value = object.value(key);
+    return value.isString() ? value.toString() : fallback;
+}
+
+QString nestedJsonString(const QJsonObject& object, const QString& objectKey, const QString& key)
+{
+    const QJsonValue nested = object.value(objectKey);
+    if (!nested.isObject()) return {};
+    return jsonString(nested.toObject(), key);
+}
+
+bool writeTextFile(const QString& path, const QString& text)
+{
+    if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return false;
+    QTextStream stream(&file);
+    stream.setEncoding(QStringConverter::Utf8);
+    stream << text;
+    return true;
+}
+
 } // namespace
 
 Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
@@ -85,12 +138,29 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     QWidget* parent,
     bool deviceOnline,
     rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer,
-    const QString& localFtpRootPath)
+    const QString& localFtpRootPath,
+    rv1126b::EventSyncService* eventSyncService,
+    const QString& evidenceRootPath,
+    const QString& deviceEndpointText,
+    rv1126b::IBoardApiClient* boardApi,
+    std::function<rv1126b::IBoardApiClient*(const QString&)> boardApiForHost,
+    std::function<QString(const QString&)> deviceIdForHost,
+    const QString& storageRootPath,
+    std::function<bool(const QString&)> storageRootChangeHandler)
     : QDialog(parent)
     , deviceId_(deviceId)
     , controller_(controller)
     , ftpReceiveServer_(ftpReceiveServer)
+    , eventSyncService_(eventSyncService)
+    , boardApi_(boardApi)
+    , currentExportApi_(boardApi)
+    , boardApiForHost_(std::move(boardApiForHost))
+    , deviceIdForHost_(std::move(deviceIdForHost))
+    , storageRootChangeHandler_(std::move(storageRootChangeHandler))
     , localFtpRootPath_(localFtpRootPath)
+    , evidenceRootPath_(evidenceRootPath)
+    , storageRootPath_(storageRootPath)
+    , deviceEndpointText_(deviceEndpointText)
     , taskRefreshTimer_(new QTimer(this))
     , deviceOnline_(deviceOnline)
 {
@@ -109,6 +179,8 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     tabs_->setObjectName(QStringLiteral("deviceOperationsTabs"));
     tabs_->addTab(createEvidencePage(), QStringLiteral("展示配置"));
     tabs_->addTab(createTimePage(), QStringLiteral("时间"));
+    tabs_->addTab(createEventSyncPage(), QStringLiteral("HTTP 事件同步"));
+    tabs_->addTab(createIspPage(), QStringLiteral("图像/曝光"));
     tabs_->addTab(createFtpConfigPage(), QStringLiteral("FTP 配置"));
     tabs_->addTab(createFtpTasksPage(), QStringLiteral("FTP 历史任务"));
     tabs_->setCurrentIndex(static_cast<int>(initialPage));
@@ -131,8 +203,10 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     controller_->selectDevice(deviceId_);
     tabs_->setTabEnabled(0, deviceOnline_ && controller_->boardApiAvailable());
     tabs_->setTabEnabled(1, deviceOnline_ && controller_->boardApiAvailable());
-    tabs_->setTabEnabled(2, deviceOnline_ && controller_->ftpServiceAvailable());
-    tabs_->setTabEnabled(3, (deviceOnline_ && controller_->ftpServiceAvailable())
+    tabs_->setTabEnabled(2, eventSyncService_ != nullptr);
+    tabs_->setTabEnabled(3, deviceOnline_ && boardApi_ != nullptr);
+    tabs_->setTabEnabled(4, deviceOnline_ && controller_->ftpServiceAvailable());
+    tabs_->setTabEnabled(5, (deviceOnline_ && controller_->ftpServiceAvailable())
                                 || controller_->ftpTaskSnapshotAvailable());
     createTaskButton_->setEnabled(deviceOnline_ && controller_->ftpServiceAvailable());
     if (deviceOnline_) {
@@ -248,6 +322,231 @@ QWidget* Rv1126bDeviceManagementDialog::createTimePage()
     return page;
 }
 
+QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
+{
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+
+    auto* summary = new QGroupBox(QStringLiteral("主动拉取链路"), page);
+    auto* form = new QFormLayout(summary);
+    eventSyncModeLabel_ = new QLabel(summary);
+    eventSyncRootLabel_ = new QLabel(summary);
+    eventSyncStatus_ = new QLabel(summary);
+    eventStorageRootEdit_ = new QLineEdit(defaultEventStorageRoot(), summary);
+    eventStorageBrowseButton_ = new QPushButton(QStringLiteral("选择"), summary);
+    eventStorageSaveButton_ = new QPushButton(QStringLiteral("保存路径"), summary);
+    eventSyncStatus_->setObjectName(QStringLiteral("eventSyncStatusLabel"));
+    eventSyncStatus_->setWordWrap(true);
+    eventSyncModeLabel_->setText(QStringLiteral("应用端通过 HTTP 主动拉取板端 API，不依赖 FTP 和 Windows 被动端口。"));
+    eventSyncRootLabel_->setText(QDir(currentEventStorageRoot()).filePath(QStringLiteral("rv1126b/events")));
+    eventSyncStatus_->setText(eventSyncService_
+                                  ? (eventSyncService_->isRunning()
+                                         ? QStringLiteral("正在自动同步新事件")
+                                         : QStringLiteral("同步服务已装配，但当前未运行"))
+                                  : QStringLiteral("当前设备没有装配 HTTP 事件同步服务"));
+    form->addRow(QStringLiteral("同步方式"), eventSyncModeLabel_);
+    form->addRow(QStringLiteral("当前板端"), new QLabel(deviceEndpointText_.trimmed().isEmpty()
+                                                       ? deviceId_
+                                                       : deviceEndpointText_, summary));
+    form->addRow(QStringLiteral("事件缓存目录"), eventSyncRootLabel_);
+    auto* storageRow = new QWidget(summary);
+    auto* storageLayout = new QHBoxLayout(storageRow);
+    storageLayout->setContentsMargins(0, 0, 0, 0);
+    storageLayout->addWidget(eventStorageRootEdit_, 1);
+    storageLayout->addWidget(eventStorageBrowseButton_);
+    storageLayout->addWidget(eventStorageSaveButton_);
+    form->addRow(QStringLiteral("本地存储根目录"), storageRow);
+    form->addRow(QStringLiteral("状态"), eventSyncStatus_);
+    layout->addWidget(summary);
+
+    auto* actions = new QGroupBox(QStringLiteral("自动同步"), page);
+    auto* actionsLayout = new QGridLayout(actions);
+    eventSyncStartButton_ = new QPushButton(QStringLiteral("启动自动同步"), actions);
+    eventSyncStopButton_ = new QPushButton(QStringLiteral("暂停自动同步"), actions);
+    eventSyncPollButton_ = new QPushButton(QStringLiteral("立即同步一次"), actions);
+    eventSyncAllButton_ = new QPushButton(QStringLiteral("拉取全部已有数据"), actions);
+    eventSyncFromNowButton_ = new QPushButton(QStringLiteral("从现在开始拉取"), actions);
+    eventSyncStartButton_->setObjectName(QStringLiteral("eventSyncStartButton"));
+    eventSyncStopButton_->setObjectName(QStringLiteral("eventSyncStopButton"));
+    eventSyncPollButton_->setObjectName(QStringLiteral("eventSyncPollButton"));
+    eventSyncAllButton_->setObjectName(QStringLiteral("eventSyncAllButton"));
+    eventSyncFromNowButton_->setObjectName(QStringLiteral("eventSyncFromNowButton"));
+    actionsLayout->addWidget(eventSyncStartButton_, 0, 0);
+    actionsLayout->addWidget(eventSyncStopButton_, 0, 1);
+    actionsLayout->addWidget(eventSyncPollButton_, 0, 2);
+    actionsLayout->addWidget(eventSyncAllButton_, 1, 0);
+    actionsLayout->addWidget(eventSyncFromNowButton_, 1, 1);
+    layout->addWidget(actions);
+
+    auto* exportBox = new QGroupBox(QStringLiteral("生成用户可读事件资料包"), page);
+    auto* exportLayout = new QGridLayout(exportBox);
+    eventSyncHostsEdit_ = new QLineEdit(exportBox);
+    eventSyncHostsEdit_->setPlaceholderText(QStringLiteral("例如：192.168.137.73, 192.168.137.74"));
+    eventSyncHostsEdit_->setText(deviceEndpointText_.section(QLatin1Char(':'), 0, 0));
+    eventExportRangeCombo_ = new QComboBox(exportBox);
+    eventExportRangeCombo_->addItem(QStringLiteral("拉取全部已有事件"), QStringLiteral("all"));
+    eventExportRangeCombo_->addItem(QStringLiteral("仅拉取最新 100 条"), QStringLiteral("latest100"));
+    eventExportRangeCombo_->addItem(QStringLiteral("最近 N 天"), QStringLiteral("recent_days"));
+    eventExportDaysSpin_ = new QSpinBox(exportBox);
+    eventExportDaysSpin_->setRange(1, 7);
+    eventExportDaysSpin_->setValue(1);
+    eventExportDaysSpin_->setSuffix(QStringLiteral(" 天"));
+    exportEvidenceCheck_ = new QCheckBox(QStringLiteral("证据图 evidence.jpg"), exportBox);
+    exportSnapshotCheck_ = new QCheckBox(QStringLiteral("原始抓拍 snapshot.jpg"), exportBox);
+    exportFormalCheck_ = new QCheckBox(QStringLiteral("事件 JSON event.json"), exportBox);
+    exportOcrCheck_ = new QCheckBox(QStringLiteral("OCR JSON ocr.json"), exportBox);
+    exportDetailCheck_ = new QCheckBox(QStringLiteral("详情 JSON detail.json"), exportBox);
+    exportSummaryCheck_ = new QCheckBox(QStringLiteral("摘要 summary.txt"), exportBox);
+    exportTrackMetaCheck_ = new QCheckBox(QStringLiteral("轨迹调试 track_meta.json"), exportBox);
+    for (QCheckBox* box : {exportEvidenceCheck_, exportSnapshotCheck_, exportFormalCheck_,
+                           exportOcrCheck_, exportDetailCheck_, exportSummaryCheck_}) {
+        box->setChecked(true);
+    }
+    exportTrackMetaCheck_->setChecked(false);
+    eventExportButton_ = new QPushButton(QStringLiteral("导出事件资料包"), exportBox);
+    eventExportButton_->setObjectName(QStringLiteral("eventExportButton"));
+    eventExportStatus_ = new QLabel(QStringLiteral("导出目录：%1").arg(currentEventExportRoot()), exportBox);
+    eventExportStatus_->setObjectName(QStringLiteral("eventExportStatusLabel"));
+    eventExportStatus_->setWordWrap(true);
+    exportLayout->addWidget(new QLabel(QStringLiteral("板端 IP"), exportBox), 0, 0);
+    exportLayout->addWidget(eventSyncHostsEdit_, 0, 1, 1, 2);
+    exportLayout->addWidget(new QLabel(QStringLiteral("范围"), exportBox), 1, 0);
+    exportLayout->addWidget(eventExportRangeCombo_, 1, 1);
+    exportLayout->addWidget(eventExportDaysSpin_, 1, 2);
+    exportLayout->addWidget(exportEvidenceCheck_, 2, 0);
+    exportLayout->addWidget(exportSnapshotCheck_, 2, 1);
+    exportLayout->addWidget(exportFormalCheck_, 2, 2);
+    exportLayout->addWidget(exportOcrCheck_, 3, 0);
+    exportLayout->addWidget(exportDetailCheck_, 3, 1);
+    exportLayout->addWidget(exportSummaryCheck_, 3, 2);
+    exportLayout->addWidget(exportTrackMetaCheck_, 4, 0);
+    exportLayout->addWidget(eventExportButton_, 5, 0);
+    exportLayout->addWidget(eventExportStatus_, 5, 1, 1, 2);
+    layout->addWidget(exportBox);
+    layout->addStretch();
+
+    const bool available = eventSyncService_ != nullptr;
+    eventSyncStartButton_->setEnabled(available && !eventSyncService_->isRunning());
+    eventSyncStopButton_->setEnabled(available && eventSyncService_->isRunning());
+    eventSyncPollButton_->setEnabled(available);
+    eventSyncAllButton_->setEnabled(available);
+    eventSyncFromNowButton_->setEnabled(available);
+    eventExportButton_->setEnabled(boardApi_ != nullptr);
+    eventExportDaysSpin_->setEnabled(eventExportRangeCombo_->currentData().toString() == QStringLiteral("recent_days"));
+
+    connect(eventSyncStartButton_, &QPushButton::clicked, this, [this]() {
+        if (!eventSyncService_) return;
+        eventSyncService_->start();
+        eventSyncStatus_->setText(QStringLiteral("正在自动同步新事件"));
+        eventSyncStartButton_->setEnabled(false);
+        eventSyncStopButton_->setEnabled(true);
+    });
+    connect(eventSyncStopButton_, &QPushButton::clicked, this, [this]() {
+        if (!eventSyncService_) return;
+        eventSyncService_->stop();
+        eventSyncStatus_->setText(QStringLiteral("自动同步已暂停"));
+        eventSyncStartButton_->setEnabled(true);
+        eventSyncStopButton_->setEnabled(false);
+    });
+    connect(eventSyncPollButton_, &QPushButton::clicked, this, [this]() {
+        if (!eventSyncService_) return;
+        eventSyncService_->pollNow();
+        eventSyncStatus_->setText(QStringLiteral("已请求立即同步一次"));
+    });
+    connect(eventSyncAllButton_, &QPushButton::clicked, this, [this]() {
+        if (!eventSyncService_) return;
+        if (QMessageBox::question(this, QStringLiteral("拉取全部已有数据"),
+                                  QStringLiteral("确认从板端补拉所有已有事件？数据较多时会持续一段时间。"))
+            != QMessageBox::Yes) return;
+        eventSyncService_->syncAllExisting();
+        eventSyncStatus_->setText(QStringLiteral("正在补拉板端已有事件"));
+        eventSyncStartButton_->setEnabled(false);
+        eventSyncStopButton_->setEnabled(true);
+    });
+    connect(eventSyncFromNowButton_, &QPushButton::clicked, this, [this]() {
+        if (!eventSyncService_) return;
+        if (QMessageBox::question(this, QStringLiteral("从现在开始拉取"),
+                                  QStringLiteral("确认忽略板端已有历史事件，只拉取之后新产生的数据？"))
+            != QMessageBox::Yes) return;
+        eventSyncService_->markCurrentHeadAsSynced();
+        eventSyncStatus_->setText(QStringLiteral("正在设置同步起点"));
+        eventSyncStartButton_->setEnabled(false);
+        eventSyncStopButton_->setEnabled(true);
+    });
+    connect(eventStorageBrowseButton_, &QPushButton::clicked,
+            this, &Rv1126bDeviceManagementDialog::browseEventStorageRoot);
+    connect(eventStorageSaveButton_, &QPushButton::clicked,
+            this, &Rv1126bDeviceManagementDialog::saveEventStorageRoot);
+    connect(eventStorageRootEdit_, &QLineEdit::textChanged, this, [this]() {
+        if (eventSyncRootLabel_)
+            eventSyncRootLabel_->setText(QDir(currentEventStorageRoot()).filePath(QStringLiteral("rv1126b/events")));
+        if (eventExportStatus_ && !exportInFlight_)
+            eventExportStatus_->setText(QStringLiteral("导出目录：%1").arg(currentEventExportRoot()));
+    });
+    connect(eventExportRangeCombo_, &QComboBox::currentIndexChanged, this, [this]() {
+        eventExportDaysSpin_->setEnabled(eventExportRangeCombo_->currentData().toString() == QStringLiteral("recent_days"));
+    });
+    connect(eventExportButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::startEventExport);
+
+    if (eventSyncService_) {
+        connect(eventSyncService_, &rv1126b::EventSyncService::syncError,
+                this, [this](const QString&, const rv1126b::ApiError& error) {
+                    eventSyncStatus_->setText(QStringLiteral("同步失败：%1").arg(error.message.isEmpty() ? error.code : error.message));
+                });
+        connect(eventSyncService_, &rv1126b::EventSyncService::syncActionFinished,
+                this, [this](const QString&, const QString& action) {
+                    eventSyncStatus_->setText(QStringLiteral("同步操作完成：%1").arg(action));
+                    eventSyncStartButton_->setEnabled(!eventSyncService_->isRunning());
+                    eventSyncStopButton_->setEnabled(eventSyncService_->isRunning());
+                });
+    }
+
+    return page;
+}
+
+QWidget* Rv1126bDeviceManagementDialog::createIspPage()
+{
+    auto* page = new QWidget(this);
+    auto* layout = new QVBoxLayout(page);
+
+    auto* box = new QGroupBox(QStringLiteral("开机默认图像参数"), page);
+    auto* form = new QFormLayout(box);
+    ispStatus_ = new QLabel(QStringLiteral("未读取"), box);
+    ispStatus_->setWordWrap(true);
+    ispCurrentLabel_ = new QLabel(QStringLiteral("-"), box);
+    ispCurrentLabel_->setWordWrap(true);
+    ispPersistedLabel_ = new QLabel(QStringLiteral("-"), box);
+    ispPersistedLabel_->setWordWrap(true);
+    form->addRow(QStringLiteral("状态"), ispStatus_);
+    form->addRow(QStringLiteral("当前运行"), ispCurrentLabel_);
+    form->addRow(QStringLiteral("开机默认"), ispPersistedLabel_);
+    layout->addWidget(box);
+
+    auto* hint = new QLabel(QStringLiteral(
+        "这里不会直接调曝光。先在网页端或调试工具里把画面调到满意，再点“保存当前为开机默认”。"
+        "保存后，断电重启或生产服务重启会自动恢复这组曝光、增益、亮度/对比度、HLC/BLC/HDR/WDR 参数。"), page);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color:#44515f;"));
+    layout->addWidget(hint);
+
+    auto* row = new QHBoxLayout();
+    ispRefreshButton_ = new QPushButton(QStringLiteral("重新读取"), page);
+    ispSaveCurrentButton_ = new QPushButton(QStringLiteral("保存当前为开机默认"), page);
+    ispClearButton_ = new QPushButton(QStringLiteral("取消开机默认覆盖"), page);
+    row->addWidget(ispRefreshButton_);
+    row->addWidget(ispSaveCurrentButton_);
+    row->addWidget(ispClearButton_);
+    row->addStretch();
+    layout->addLayout(row);
+    layout->addStretch();
+
+    connect(ispRefreshButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::refreshIspConfig);
+    connect(ispSaveCurrentButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::saveCurrentIspConfig);
+    connect(ispClearButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::clearIspConfig);
+    QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::refreshIspConfig);
+    return page;
+}
+
 QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
 {
     auto* page = new QWidget(this);
@@ -305,7 +604,7 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     localFtpStopButton_->setObjectName(QStringLiteral("localFtpStopButton"));
     auto* fillTarget = new QPushButton(QStringLiteral("填入本机目标"), receiver);
     fillTarget->setObjectName(QStringLiteral("localFtpFillTargetButton"));
-    auto* saveTarget = new QPushButton(QStringLiteral("写入板端并启用新事件"), receiver);
+    auto* saveTarget = new QPushButton(QStringLiteral("一键启动接收并配置板端"), receiver);
     saveTarget->setObjectName(QStringLiteral("localFtpSaveTargetButton"));
     localFtpStatus_ = new QLabel(receiver);
     localFtpStatus_->setObjectName(QStringLiteral("localFtpStatusLabel"));
@@ -420,7 +719,7 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     layout->addWidget(ftpStatus_);
     auto* actions = new QHBoxLayout;
     auto* reload = new QPushButton(QStringLiteral("重新读取"), page);
-    saveFtpButton_ = new QPushButton(QStringLiteral("保存并启用新事件自动下发"), page);
+    saveFtpButton_ = new QPushButton(QStringLiteral("保存并启用全部事件自动下发"), page);
     saveFtpButton_->setObjectName(QStringLiteral("saveAndEnableFtpButton"));
     auto* rollback = new QPushButton(QStringLiteral("回滚最近配置"), page);
     connect(reload, &QPushButton::clicked, controller_, [this]() {
@@ -575,7 +874,7 @@ void Rv1126bDeviceManagementDialog::connectController()
                 if (!result.configSaved) ftpStatus_->setText(QStringLiteral("FTP 配置未保存"));
                 else if (!result.autoEnabled) ftpStatus_->setText(QStringLiteral("FTP 配置已保存，但自动下发未开启；%1")
                     .arg(result.error ? result.error->code : QStringLiteral("请检查控制写能力")));
-                else ftpStatus_->setText(QStringLiteral("FTP 配置已保存，并已启用 new_events_only 自动下发"));
+                else ftpStatus_->setText(QStringLiteral("FTP 配置已保存，并已启用 all_existing 自动下发"));
                 if (!result.newRevision.isEmpty()) {
                     ftpRevision_ = result.newRevision;
                     ftpRevisionLabel_->setText(QStringLiteral("revision：%1").arg(ftpRevision_));
@@ -1022,7 +1321,7 @@ void Rv1126bDeviceManagementDialog::applyLocalFtpTarget(bool saveAndEnable)
         const QString targetId = localFtpTargetIdEdit_
             ? localFtpTargetIdEdit_->text().trimmed()
             : QStringLiteral("local_pc");
-        localFtpStatus_->setText(QStringLiteral("已填入本机目标 %1，可手动保存或创建历史任务").arg(targetId));
+        localFtpStatus_->setText(QStringLiteral("已填入本机目标 %1，可一键配置板端或创建历史任务").arg(targetId));
         return;
     }
     if (!controller_) return;
@@ -1046,7 +1345,410 @@ void Rv1126bDeviceManagementDialog::updateLocalFtpReceiverState()
                                      .arg(ftpReceiveServer_->controlPort())
                                      .arg(config.rootPath));
     } else if (localFtpStatus_->text().isEmpty()) {
-        localFtpStatus_->setText(QStringLiteral("启动后可一键写入板端 FTP 目标，客户无需另开 FTP 工具"));
+        localFtpStatus_->setText(QStringLiteral("点击“一键启动接收并配置板端”即可启动接收服务并写入板端"));
+    }
+}
+
+void Rv1126bDeviceManagementDialog::startEventExport()
+{
+    if (exportInFlight_) return;
+    const bool anyContent = exportEvidenceCheck_->isChecked()
+        || exportSnapshotCheck_->isChecked()
+        || exportFormalCheck_->isChecked()
+        || exportOcrCheck_->isChecked()
+        || exportDetailCheck_->isChecked()
+        || exportSummaryCheck_->isChecked()
+        || exportTrackMetaCheck_->isChecked();
+    if (!anyContent) {
+        eventExportStatus_->setText(QStringLiteral("请至少选择一种导出内容"));
+        return;
+    }
+
+    exportTargetHosts_ = eventExportHosts();
+    if (exportTargetHosts_.isEmpty()) {
+        eventExportStatus_->setText(QStringLiteral("请填写至少一个板端 IP"));
+        return;
+    }
+    if (!QDir().mkpath(currentEventExportRoot())) {
+        eventExportStatus_->setText(QStringLiteral("无法创建导出目录：%1").arg(currentEventExportRoot()));
+        return;
+    }
+
+    exportInFlight_ = true;
+    exportTargetIndex_ = 0;
+    exportSucceeded_ = 0;
+    exportFailed_ = 0;
+    eventExportButton_->setEnabled(false);
+    startNextEventExportTarget();
+}
+
+void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
+{
+    if (!exportInFlight_) return;
+    exportEvents_.clear();
+    exportFiles_.clear();
+    exportEventIndex_ = 0;
+    exportFileIndex_ = 0;
+    currentExportApi_ = nullptr;
+    exportTargetHost_.clear();
+    exportTargetDeviceId_.clear();
+
+    if (exportTargetIndex_ >= exportTargetHosts_.size()) {
+        exportInFlight_ = false;
+        if (eventExportButton_) eventExportButton_->setEnabled(boardApi_ != nullptr);
+        if (eventExportStatus_) {
+            eventExportStatus_->setText(QStringLiteral("导出完成：成功事件 %1，失败/缺失文件 %2；目录：%3")
+                                            .arg(exportSucceeded_)
+                                            .arg(exportFailed_)
+                                            .arg(currentEventExportRoot()));
+        }
+        return;
+    }
+
+    exportTargetHost_ = exportTargetHosts_.at(exportTargetIndex_).trimmed();
+    const QString currentHost = deviceEndpointText_.section(QLatin1Char(':'), 0, 0).trimmed();
+    if (boardApiForHost_) currentExportApi_ = boardApiForHost_(exportTargetHost_);
+    if (!currentExportApi_ && exportTargetHost_.compare(currentHost, Qt::CaseInsensitive) == 0)
+        currentExportApi_ = boardApi_;
+    if (deviceIdForHost_) exportTargetDeviceId_ = deviceIdForHost_(exportTargetHost_);
+    if (exportTargetDeviceId_.trimmed().isEmpty()
+        && exportTargetHost_.compare(currentHost, Qt::CaseInsensitive) == 0)
+        exportTargetDeviceId_ = deviceId_;
+
+    if (!currentExportApi_ || exportTargetDeviceId_.trimmed().isEmpty()) {
+        exportFailed_++;
+        if (eventExportStatus_)
+            eventExportStatus_->setText(QStringLiteral("跳过 %1：该 IP 未在应用中添加或未授权 HTTP API").arg(exportTargetHost_));
+        ++exportTargetIndex_;
+        QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::startNextEventExportTarget);
+        return;
+    }
+
+    const QString runName = QStringLiteral("export_%1").arg(
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    exportTargetRoot_ = QDir(currentEventExportRoot()).filePath(
+        QDir(safeSegment(exportTargetDeviceId_, safeSegment(exportTargetHost_, QStringLiteral("device"))))
+            .filePath(runName));
+    exportRunRoot_ = exportTargetRoot_;
+    QDir().mkpath(exportRunRoot_);
+    writeTextFile(QDir(exportRunRoot_).filePath(QStringLiteral("index.csv")),
+                  QStringLiteral("device_id,host,event_id,track_id,event_time,plate,ocr_status,speed_kmh,direction,folder\n"));
+
+    eventExportStatus_->setText(QStringLiteral("正在读取 %1 的事件列表...").arg(exportTargetHost_));
+    requestEventExportPage();
+}
+
+void Rv1126bDeviceManagementDialog::requestEventExportPage(const std::optional<QString>& cursor)
+{
+    if (!exportInFlight_ || !currentExportApi_) return;
+    currentExportApi_->listEvents(100, cursor, this, [this](rv1126b::ApiResult<rv1126b::EventPageDto> result) {
+        handleEventExportPage(std::move(result));
+    });
+}
+
+void Rv1126bDeviceManagementDialog::handleEventExportPage(rv1126b::ApiResult<rv1126b::EventPageDto> result)
+{
+    if (!exportInFlight_) return;
+    if (!result) {
+        exportFailed_++;
+        finishEventExport();
+        return;
+    }
+    const rv1126b::EventPageDto page = result.value();
+    const QString range = eventExportRangeCombo_->currentData().toString();
+    const bool latest100 = range == QStringLiteral("latest100");
+    const bool recentDays = range == QStringLiteral("recent_days");
+    const qint64 cutoffMs = QDateTime::currentDateTimeUtc().addDays(-eventExportDaysSpin_->value()).toMSecsSinceEpoch();
+    bool reachedOldEvent = false;
+
+    for (const rv1126b::EventSummaryDto& value : page.items) {
+        if (recentDays && value.eventTime.epochMs > 0 && value.eventTime.epochMs < cutoffMs) {
+            reachedOldEvent = true;
+            continue;
+        }
+        exportEvents_.append(value);
+        if (latest100 && exportEvents_.size() >= 100) break;
+    }
+    eventExportStatus_->setText(QStringLiteral("%1 已读取 %2 个事件...")
+                                    .arg(exportTargetHost_)
+                                    .arg(exportEvents_.size()));
+    const bool latest100Done = latest100 && exportEvents_.size() >= 100;
+    if (!latest100Done && !reachedOldEvent && page.hasMore && page.nextCursor.has_value()) {
+        requestEventExportPage(page.nextCursor);
+        return;
+    }
+    if (exportEvents_.isEmpty()) {
+        finishEventExport();
+        return;
+    }
+    exportNextEvent();
+}
+
+void Rv1126bDeviceManagementDialog::exportNextEvent()
+{
+    if (!exportInFlight_ || !currentExportApi_) return;
+    if (exportEventIndex_ >= exportEvents_.size()) {
+        finishEventExport();
+        return;
+    }
+    const rv1126b::EventSummaryDto summary = exportEvents_.at(exportEventIndex_);
+    rv1126b::EventIdentity identity;
+    identity.deviceId = exportTargetDeviceId_;
+    identity.eventId = summary.eventId;
+    identity.trackId = summary.trackId;
+    eventExportStatus_->setText(QStringLiteral("%1 正在导出第 %2/%3 个事件：event=%4 track=%5")
+                                    .arg(exportTargetHost_)
+                                    .arg(exportEventIndex_ + 1)
+                                    .arg(exportEvents_.size())
+                                    .arg(summary.eventId)
+                                    .arg(summary.trackId));
+    currentExportApi_->getEventDetail(identity, this,
+        [this, summary](rv1126b::ApiResult<rv1126b::EventDetailDto> result) {
+            handleExportEventDetail(summary, std::move(result));
+        });
+}
+
+void Rv1126bDeviceManagementDialog::handleExportEventDetail(
+    const rv1126b::EventSummaryDto& summary,
+    rv1126b::ApiResult<rv1126b::EventDetailDto> result)
+{
+    if (!exportInFlight_) return;
+    if (!result) {
+        exportFailed_++;
+        ++exportEventIndex_;
+        exportNextEvent();
+        return;
+    }
+
+    const rv1126b::EventDetailDto detail = result.value();
+    const qint64 epochMs = detail.summary.eventTime.epochMs > 0
+        ? detail.summary.eventTime.epochMs
+        : (summary.eventTime.epochMs > 0 ? summary.eventTime.epochMs : QDateTime::currentMSecsSinceEpoch());
+    const QDateTime eventTime = QDateTime::fromMSecsSinceEpoch(epochMs).toLocalTime();
+    const QString dateDir = eventTime.toString(QStringLiteral("yyyy-MM-dd"));
+    const QString plate = detail.summary.plateText.trimmed().isEmpty()
+        ? (detail.summary.ocrStatus.rawValue.isEmpty()
+               ? QStringLiteral("no_plate")
+               : detail.summary.ocrStatus.rawValue)
+        : detail.summary.plateText.trimmed();
+    const QString folderName = safeSegment(
+        QStringLiteral("%1_%4_event%2_track%3")
+            .arg(eventTime.toString(QStringLiteral("yyyyMMdd_HHmmss")))
+            .arg(detail.summary.eventId)
+            .arg(detail.summary.trackId)
+            .arg(plate),
+        QStringLiteral("event"));
+    const QString folder = QDir(exportRunRoot_).filePath(QDir(dateDir).filePath(folderName));
+    QDir().mkpath(folder);
+
+    const QJsonObject files = detail.rawJson.value(QStringLiteral("files")).toObject();
+    const QJsonObject images = detail.rawJson.value(QStringLiteral("images")).toObject();
+    exportFiles_.clear();
+    exportFileIndex_ = 0;
+    auto addDownload = [this, &folder](const QString& url, const QString& name) {
+        if (url.trimmed().isEmpty()) return;
+        ExportFile file;
+        file.url = url.trimmed();
+        file.finalPath = QDir(folder).filePath(name);
+        file.partPath = file.finalPath + QStringLiteral(".part");
+        file.optional = true;
+        exportFiles_.append(file);
+    };
+    if (exportEvidenceCheck_->isChecked())
+        addDownload(jsonString(files, QStringLiteral("evidence"), jsonString(images, QStringLiteral("evidence"))),
+                    QStringLiteral("evidence.jpg"));
+    if (exportSnapshotCheck_->isChecked())
+        addDownload(jsonString(files, QStringLiteral("snapshot"), jsonString(images, QStringLiteral("snapshot"))),
+                    QStringLiteral("snapshot.jpg"));
+    if (exportFormalCheck_->isChecked())
+        addDownload(jsonString(files, QStringLiteral("formal")), QStringLiteral("event.json"));
+    if (exportOcrCheck_->isChecked())
+        addDownload(jsonString(files, QStringLiteral("ocr")), QStringLiteral("ocr.json"));
+    if (exportTrackMetaCheck_->isChecked())
+        addDownload(QStringLiteral("/api/v1/events/%1/%2/files/track_meta")
+                        .arg(detail.summary.eventId)
+                        .arg(detail.summary.trackId),
+                    QStringLiteral("debug/track_meta.json"));
+
+    if (exportDetailCheck_->isChecked()) {
+        writeTextFile(QDir(folder).filePath(QStringLiteral("detail.json")),
+                      QString::fromUtf8(QJsonDocument(detail.rawJson).toJson(QJsonDocument::Indented)));
+    }
+    if (exportSummaryCheck_->isChecked()) {
+        QString text;
+        QTextStream stream(&text);
+        stream.setEncoding(QStringConverter::Utf8);
+        stream << "设备：" << exportTargetDeviceId_ << "\n";
+        stream << "板端 IP：" << exportTargetHost_ << "\n";
+        stream << "时间：" << eventTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) << "\n";
+        stream << "事件ID：" << detail.summary.eventId << "\n";
+        stream << "Track ID：" << detail.summary.trackId << "\n";
+        stream << "车牌：" << (detail.summary.plateText.isEmpty() ? QStringLiteral("未识别") : detail.summary.plateText) << "\n";
+        stream << "OCR状态：" << detail.summary.ocrStatus.rawValue << "\n";
+        stream << "方向：" << detail.summary.motionDirection << "\n";
+        stream << "速度：" << detail.summary.speedKmh << " km/h\n";
+        stream << "证据图：" << (exportEvidenceCheck_->isChecked() ? QStringLiteral("evidence.jpg") : QStringLiteral("未导出")) << "\n";
+        stream << "原始抓拍：" << (exportSnapshotCheck_->isChecked() ? QStringLiteral("snapshot.jpg") : QStringLiteral("未导出")) << "\n";
+        writeTextFile(QDir(folder).filePath(QStringLiteral("summary.txt")), text);
+    }
+
+    QFile index(QDir(exportRunRoot_).filePath(QStringLiteral("index.csv")));
+    if (index.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QTextStream stream(&index);
+        stream.setEncoding(QStringConverter::Utf8);
+        stream << csvEscape(exportTargetDeviceId_) << ','
+               << csvEscape(exportTargetHost_) << ','
+               << detail.summary.eventId << ','
+               << detail.summary.trackId << ','
+               << csvEscape(eventTime.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))) << ','
+               << csvEscape(detail.summary.plateText) << ','
+               << csvEscape(detail.summary.ocrStatus.rawValue) << ','
+               << detail.summary.speedKmh << ','
+               << csvEscape(detail.summary.motionDirection) << ','
+               << csvEscape(QDir(exportRunRoot_).relativeFilePath(folder)) << '\n';
+    }
+
+    downloadNextExportFile();
+}
+
+void Rv1126bDeviceManagementDialog::downloadNextExportFile()
+{
+    if (!exportInFlight_ || !currentExportApi_) return;
+    if (exportFileIndex_ >= exportFiles_.size()) {
+        exportSucceeded_++;
+        ++exportEventIndex_;
+        exportNextEvent();
+        return;
+    }
+    const ExportFile file = exportFiles_.at(exportFileIndex_);
+    QFile::remove(file.partPath);
+    currentExportApi_->downloadFileToPartFile(file.url, file.partPath, this,
+        [this](rv1126b::ApiResult<rv1126b::EvidenceDownloadResult> result) {
+            handleExportFileDownloaded(std::move(result));
+        });
+}
+
+void Rv1126bDeviceManagementDialog::handleExportFileDownloaded(
+    rv1126b::ApiResult<rv1126b::EvidenceDownloadResult> result)
+{
+    if (!exportInFlight_) return;
+    const ExportFile file = exportFiles_.value(exportFileIndex_);
+    if (result) {
+        QFile::remove(file.finalPath);
+        if (!QDir().mkpath(QFileInfo(file.finalPath).absolutePath())
+            || !QFile::rename(file.partPath, file.finalPath)) {
+            exportFailed_++;
+        }
+    } else {
+        QFile::remove(file.partPath);
+        exportFailed_++;
+    }
+    exportFileIndex_++;
+    downloadNextExportFile();
+}
+
+void Rv1126bDeviceManagementDialog::finishEventExport()
+{
+    if (eventExportStatus_) {
+        eventExportStatus_->setText(QStringLiteral("%1 完成：本设备事件 %2 个，累计失败/缺失文件 %3")
+                                        .arg(exportTargetHost_)
+                                        .arg(exportEvents_.size())
+                                        .arg(exportFailed_));
+    }
+    ++exportTargetIndex_;
+    QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::startNextEventExportTarget);
+}
+
+void Rv1126bDeviceManagementDialog::refreshIspConfig()
+{
+    if (!boardApi_) {
+        if (ispStatus_) ispStatus_->setText(QStringLiteral("当前设备没有可用的 HTTP API"));
+        return;
+    }
+    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在读取图像参数..."));
+    boardApi_->getIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
+        if (!result) {
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("读取失败：%1").arg(result.error().message));
+            return;
+        }
+        applyIspConfigJson(result.value());
+    });
+}
+
+void Rv1126bDeviceManagementDialog::saveCurrentIspConfig()
+{
+    if (!boardApi_) return;
+    if (QMessageBox::question(this, QStringLiteral("保存当前图像参数"),
+                              QStringLiteral("确认把板端当前运行中的曝光/增益/图像参数保存为开机默认？\n"
+                                             "以后生产服务启动时会自动恢复这组参数。"))
+        != QMessageBox::Yes) return;
+    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在保存当前图像参数..."));
+    boardApi_->saveCurrentIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
+        if (!result) {
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("保存失败：%1").arg(result.error().message));
+            return;
+        }
+        applyIspConfigJson(result.value());
+        if (ispStatus_) ispStatus_->setText(QStringLiteral("已保存当前图像参数为开机默认"));
+    });
+}
+
+void Rv1126bDeviceManagementDialog::clearIspConfig()
+{
+    if (!boardApi_) return;
+    if (QMessageBox::question(this, QStringLiteral("取消开机默认覆盖"),
+                              QStringLiteral("确认取消我们生产配置对 ISP 图像参数的开机覆盖？\n"
+                                             "取消后，板端会回到原厂 rkipc 启动配置。"))
+        != QMessageBox::Yes) return;
+    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在取消开机默认覆盖..."));
+    boardApi_->clearIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
+        if (!result) {
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("取消失败：%1").arg(result.error().message));
+            return;
+        }
+        applyIspConfigJson(result.value());
+        if (ispStatus_) ispStatus_->setText(QStringLiteral("已取消开机默认覆盖"));
+    });
+}
+
+void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config)
+{
+    auto summary = [](const QJsonObject& object) {
+        const QString enabled = object.value(QStringLiteral("enabled")).toBool()
+            ? QStringLiteral("启用")
+            : QStringLiteral("未启用");
+        return QStringLiteral("%1；曝光=%2 %3；增益=%4 %5；亮度=%6；对比度=%7；HLC=%8/%9；BLC=%10/%11；HDR=%12/%13；WDR=%14/%15")
+            .arg(enabled,
+                 object.value(QStringLiteral("exposure_mode")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("exposure_time")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("gain_mode")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("exposure_gain")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("brightness")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("contrast")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("hlc")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("hlc_level")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("blc_region")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("blc_strength")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("hdr")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("hdr_level")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("wdr")).toString(QStringLiteral("-")),
+                 object.value(QStringLiteral("wdr_level")).toString(QStringLiteral("-")));
+    };
+
+    QJsonObject current = config.value(QStringLiteral("current_live")).toObject();
+    if (current.isEmpty()) current = config.value(QStringLiteral("current")).toObject();
+    if (current.isEmpty()) current = config.value(QStringLiteral("current_ini")).toObject();
+    const QJsonObject persisted = config.value(QStringLiteral("persisted")).toObject();
+    if (ispCurrentLabel_) ispCurrentLabel_->setText(summary(current));
+    if (ispPersistedLabel_) ispPersistedLabel_->setText(summary(persisted));
+    if (ispStatus_) {
+        const QString revision = config.value(QStringLiteral("revision")).toString(QStringLiteral("-"));
+        const QString source = config.value(QStringLiteral("current_source")).toString(QStringLiteral("unknown"));
+        const bool restartRequired = config.value(QStringLiteral("restart_required")).toBool();
+        ispStatus_->setText(QStringLiteral("revision=%1；当前值来源=%2；%3")
+            .arg(revision, source,
+                 restartRequired ? QStringLiteral("需要重启生产服务后完全生效")
+                                 : QStringLiteral("当前运行值与持久化状态一致")));
     }
 }
 
@@ -1137,6 +1839,75 @@ void Rv1126bDeviceManagementDialog::writeLocalFtpTargetRow()
     if (auto* configured = qobject_cast<QLabel*>(ftpTargetsTable_->cellWidget(row, 9))) {
         configured->setText(QStringLiteral("将替换"));
     }
+}
+
+QString Rv1126bDeviceManagementDialog::defaultEventStorageRoot() const
+{
+    if (!storageRootPath_.trimmed().isEmpty()) return QDir::cleanPath(storageRootPath_.trimmed());
+    if (!evidenceRootPath_.trimmed().isEmpty()) {
+        QDir root(evidenceRootPath_);
+        root.cdUp();
+        root.cdUp();
+        return QDir::cleanPath(root.absolutePath());
+    }
+    return QDir::cleanPath(QDir::home().filePath(QStringLiteral("RV_CAM_DATA")));
+}
+
+QString Rv1126bDeviceManagementDialog::currentEventStorageRoot() const
+{
+    const QString text = eventStorageRootEdit_ ? eventStorageRootEdit_->text().trimmed() : QString();
+    return QDir::cleanPath(text.isEmpty() ? defaultEventStorageRoot() : text);
+}
+
+QString Rv1126bDeviceManagementDialog::currentEventExportRoot() const
+{
+    return QDir::cleanPath(QDir(currentEventStorageRoot()).filePath(QStringLiteral("rv1126b/exports/events")));
+}
+
+QStringList Rv1126bDeviceManagementDialog::eventExportHosts() const
+{
+    QString text = eventSyncHostsEdit_ ? eventSyncHostsEdit_->text() : QString();
+    if (text.trimmed().isEmpty()) text = deviceEndpointText_.section(QLatin1Char(':'), 0, 0);
+    QStringList values = text.split(QRegularExpression(QStringLiteral(R"([,;，；\s]+)")),
+                                    Qt::SkipEmptyParts);
+    QStringList hosts;
+    for (QString value : values) {
+        value = value.trimmed();
+        if (value.startsWith(QStringLiteral("http://"))) value = QUrl(value).host();
+        if (value.contains(QLatin1Char(':'))) value = value.section(QLatin1Char(':'), 0, 0);
+        if (!value.isEmpty() && !hosts.contains(value, Qt::CaseInsensitive)) hosts.append(value);
+    }
+    return hosts;
+}
+
+void Rv1126bDeviceManagementDialog::browseEventStorageRoot()
+{
+    const QString path = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("选择本地存储根目录"), currentEventStorageRoot());
+    if (!path.isEmpty()) eventStorageRootEdit_->setText(QDir::cleanPath(path));
+}
+
+void Rv1126bDeviceManagementDialog::saveEventStorageRoot()
+{
+    const QString root = currentEventStorageRoot();
+    if (root.trimmed().isEmpty()) {
+        showError(QStringLiteral("invalid_storage_root"), QStringLiteral("本地存储根目录不能为空"));
+        return;
+    }
+    if (!QDir().mkpath(root)) {
+        showError(QStringLiteral("storage_root_unwritable"), QStringLiteral("无法创建本地存储根目录"));
+        return;
+    }
+    if (storageRootChangeHandler_ && !storageRootChangeHandler_(root)) {
+        showError(QStringLiteral("storage_root_save_failed"), QStringLiteral("保存本地存储根目录失败"));
+        return;
+    }
+    storageRootPath_ = root;
+    evidenceRootPath_ = QDir(root).filePath(QStringLiteral("rv1126b/events"));
+    if (eventSyncRootLabel_) eventSyncRootLabel_->setText(evidenceRootPath_);
+    if (eventExportStatus_ && !exportInFlight_)
+        eventExportStatus_->setText(QStringLiteral("导出目录：%1").arg(currentEventExportRoot()));
+    eventSyncStatus_->setText(QStringLiteral("本地存储根目录已保存"));
 }
 
 void Rv1126bDeviceManagementDialog::showRevisionConflict(

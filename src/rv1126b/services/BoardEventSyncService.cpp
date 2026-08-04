@@ -44,6 +44,31 @@ EventSortKey sortKeyFromEvent(const VehicleEvent& event)
     return key;
 }
 
+QString optionalUrl(const QJsonObject& object, const QString& key)
+{
+    const QJsonValue value = object.value(key);
+    return value.isString() ? value.toString().trimmed() : QString();
+}
+
+QString preferredImageUrl(const EventSummaryDto& summary)
+{
+    if (!summary.evidenceRelativeUrl.trimmed().isEmpty()) {
+        return summary.evidenceRelativeUrl.trimmed();
+    }
+    return optionalUrl(summary.rawJson, QStringLiteral("snapshot_url"));
+}
+
+QString preferredImageUrl(const EventDetailDto& detail)
+{
+    const QString evidence = detail.evidenceRelativeUrl
+        ? detail.evidenceRelativeUrl->trimmed()
+        : QString();
+    if (!evidence.isEmpty()) {
+        return evidence;
+    }
+    return optionalUrl(detail.images, QStringLiteral("snapshot"));
+}
+
 VehicleEvent eventFromSummary(
     const QString& deviceId,
     const EventSummaryDto& summary,
@@ -67,11 +92,11 @@ VehicleEvent eventFromSummary(
     event.plateAscii = summary.plateAscii;
     event.plateColor = summary.plateColor;
     event.evidenceStatus = summary.evidenceStatus;
-    event.evidenceAvailable = summary.evidenceAvailable;
+    event.evidenceRelativeUrl = preferredImageUrl(summary);
+    event.evidenceAvailable = summary.evidenceAvailable || !event.evidenceRelativeUrl.isEmpty();
     event.captureStatus = summary.captureStatus;
     event.captureError = summary.captureError;
     event.detailRelativeUrl = summary.detailRelativeUrl;
-    event.evidenceRelativeUrl = summary.evidenceRelativeUrl;
     event.firstSeenEpochMs = observedEpochMs;
     event.lastUpdatedEpochMs = observedEpochMs;
     return event;
@@ -148,6 +173,9 @@ void BoardEventSyncService::stop()
     pendingDetailRefresh_.clear();
     loadedAnchor_.reset();
     cycleHead_.reset();
+    forceFullCatchUp_ = false;
+    markCurrentHeadInFlight_ = false;
+    manualFullSyncInFlight_ = false;
     pollTimer_.stop();
     ++generation_;
 
@@ -182,6 +210,62 @@ void BoardEventSyncService::pollNow()
 
     pollTimer_.stop();
     scheduleNextPoll(0);
+}
+
+void BoardEventSyncService::syncAllExisting()
+{
+    if (syncInFlight_ || markCurrentHeadInFlight_) {
+        ApiError error = serviceError(
+            QStringLiteral("rv1126b.sync.busy"),
+            QStringLiteral("事件同步当前正在进行，请稍后再试。"));
+        emit syncError(deviceId_, error);
+        return;
+    }
+
+    if (!running_) {
+        running_ = true;
+        retryAttempt_ = 0;
+        ++generation_;
+    }
+    forceFullCatchUp_ = true;
+    manualFullSyncInFlight_ = true;
+    initialCatchUpPending_ = true;
+    pollTimer_.stop();
+    scheduleNextPoll(0);
+}
+
+void BoardEventSyncService::markCurrentHeadAsSynced()
+{
+    if (syncInFlight_ || markCurrentHeadInFlight_) {
+        ApiError error = serviceError(
+            QStringLiteral("rv1126b.sync.busy"),
+            QStringLiteral("事件同步当前正在进行，请稍后再试。"));
+        emit syncError(deviceId_, error);
+        return;
+    }
+
+    if (!apiClient_ || !repository_) {
+        emit syncError(deviceId_, serviceError(
+            QStringLiteral("rv1126b.sync.invalid_dependencies"),
+            QStringLiteral("事件同步服务尚未准备好。")));
+        return;
+    }
+
+    if (!running_) {
+        running_ = true;
+        retryAttempt_ = 0;
+        ++generation_;
+    }
+    markCurrentHeadInFlight_ = true;
+    pollTimer_.stop();
+    const int generation = generation_;
+    apiClient_->listEvents(
+        1,
+        std::nullopt,
+        this,
+        [this, generation](ApiResult<EventPageDto> result) {
+            handleCurrentHeadPage(generation, std::move(result));
+        });
 }
 
 void BoardEventSyncService::beginPoll()
@@ -222,8 +306,68 @@ void BoardEventSyncService::handleSyncAnchorLoaded(
         return;
     }
 
-    loadedAnchor_ = result.value();
+    loadedAnchor_ = forceFullCatchUp_ ? std::nullopt : result.value();
+    forceFullCatchUp_ = false;
     requestEventPage(generation, std::nullopt);
+}
+
+void BoardEventSyncService::handleCurrentHeadPage(
+    int generation, ApiResult<EventPageDto> result)
+{
+    if (!isActiveGeneration(generation) || !markCurrentHeadInFlight_) {
+        return;
+    }
+
+    if (!result.isSuccess()) {
+        markCurrentHeadInFlight_ = false;
+        emit syncError(deviceId_, result.error());
+        scheduleNextPoll(nextRetryDelayMs());
+        return;
+    }
+
+    const EventPageDto page = result.value();
+    if (page.items.isEmpty()) {
+        markCurrentHeadInFlight_ = false;
+        emit syncActionFinished(
+            deviceId_,
+            QStringLiteral("mark_current"),
+            QStringLiteral("板端当前没有已有事件；后续新事件会自动拉取。"));
+        scheduleNextPoll(pollIntervalMs_);
+        return;
+    }
+
+    SyncAnchor anchor;
+    anchor.deviceId = deviceId_;
+    anchor.previousHead = sortKeyFromSummary(page.items.first());
+    anchor.savedEpochMs = nowEpochMs();
+    repository_->saveSyncAnchor(
+        anchor,
+        this,
+        [this, generation](ApiResult<void> saveResult) {
+            handleCurrentHeadAnchorSaved(generation, std::move(saveResult));
+        });
+}
+
+void BoardEventSyncService::handleCurrentHeadAnchorSaved(
+    int generation, ApiResult<void> result)
+{
+    if (!isActiveGeneration(generation) || !markCurrentHeadInFlight_) {
+        return;
+    }
+
+    markCurrentHeadInFlight_ = false;
+    if (!result.isSuccess()) {
+        emit syncError(deviceId_, result.error());
+        scheduleNextPoll(nextRetryDelayMs());
+        return;
+    }
+
+    retryAttempt_ = 0;
+    emit syncActionFinished(
+        deviceId_,
+        QStringLiteral("mark_current"),
+        QStringLiteral("已记住板端当前最新事件；只会拉取之后产生的新事件。"));
+    scheduleNextPoll(pollIntervalMs_);
 }
 
 void BoardEventSyncService::requestEventPage(int generation, const std::optional<QString>& cursor)
@@ -438,8 +582,10 @@ void BoardEventSyncService::handleEventDetail(
     const EventIdentity& identity = event.identity;
     const EventDetailSnapshot detail = detailFromDto(deviceId_, identity, detailDto, fetchedEpochMs);
     VehicleEvent updatedEvent = eventFromSummary(deviceId_, detailDto.summary, fetchedEpochMs, identity);
-    if (detailDto.evidenceRelativeUrl) {
-        updatedEvent.evidenceRelativeUrl = *detailDto.evidenceRelativeUrl;
+    const QString imageUrl = preferredImageUrl(detailDto);
+    if (!imageUrl.isEmpty()) {
+        updatedEvent.evidenceRelativeUrl = imageUrl;
+        updatedEvent.evidenceAvailable = true;
     }
 
     repository_->saveDetail(
@@ -502,6 +648,14 @@ void BoardEventSyncService::completeCycle(int generation)
     syncInFlight_ = false;
     retryAttempt_ = 0;
 
+    if (manualFullSyncInFlight_) {
+        manualFullSyncInFlight_ = false;
+        emit syncActionFinished(
+            deviceId_,
+            QStringLiteral("sync_all"),
+            QStringLiteral("板端已有事件已完成补拉，后续继续自动同步新事件。"));
+    }
+
     if (initialCatchUpPending_) {
         initialCatchUpPending_ = false;
         emit initialCatchUpFinished(deviceId_);
@@ -517,6 +671,7 @@ void BoardEventSyncService::failCycle(int generation, const ApiError& error)
     }
 
     syncInFlight_ = false;
+    manualFullSyncInFlight_ = false;
     emit syncError(deviceId_, error);
     scheduleNextPoll(nextRetryDelayMs());
 }

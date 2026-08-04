@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QVector>
 
+#include <functional>
 #include <optional>
 
 class QCheckBox;
@@ -14,19 +15,24 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QJsonObject;
 class QSpinBox;
 class QTabWidget;
 class QTableWidget;
 class QTimer;
 
-namespace rv1126b { class EmbeddedFtpReceiveServer; }
+namespace rv1126b {
+class EmbeddedFtpReceiveServer;
+class EventSyncService;
+class IBoardApiClient;
+}
 
 class Rv1126bDeviceManagementDialog final : public QDialog
 {
     Q_OBJECT
 
 public:
-    enum class InitialPage { Evidence, Time, FtpConfig, FtpTasks };
+    enum class InitialPage { Evidence, Time, EventSync, Isp, FtpConfig, FtpTasks };
 
     explicit Rv1126bDeviceManagementDialog(
         const QString& deviceId,
@@ -35,7 +41,15 @@ public:
         QWidget* parent = nullptr,
         bool deviceOnline = true,
         rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer = nullptr,
-        const QString& localFtpRootPath = QString());
+        const QString& localFtpRootPath = QString(),
+        rv1126b::EventSyncService* eventSyncService = nullptr,
+        const QString& evidenceRootPath = QString(),
+        const QString& deviceEndpointText = QString(),
+        rv1126b::IBoardApiClient* boardApi = nullptr,
+        std::function<rv1126b::IBoardApiClient*(const QString&)> boardApiForHost = {},
+        std::function<QString(const QString&)> deviceIdForHost = {},
+        const QString& storageRootPath = QString(),
+        std::function<bool(const QString&)> storageRootChangeHandler = {});
     ~Rv1126bDeviceManagementDialog() override;
 
 protected:
@@ -44,6 +58,8 @@ protected:
 private:
     QWidget* createEvidencePage();
     QWidget* createTimePage();
+    QWidget* createEventSyncPage();
+    QWidget* createIspPage();
     QWidget* createFtpConfigPage();
     QWidget* createFtpTasksPage();
     void connectController();
@@ -67,11 +83,32 @@ private:
     void stopLocalFtpReceiver();
     void applyLocalFtpTarget(bool saveAndEnable);
     void updateLocalFtpReceiverState();
+    void refreshIspConfig();
+    void saveCurrentIspConfig();
+    void clearIspConfig();
+    void applyIspConfigJson(const QJsonObject& config);
     QString defaultLocalFtpAddress() const;
     QString defaultLocalFtpTargetId(const QString& host) const;
     int localFtpTargetRow() const;
     void syncLocalFtpTargetIdFromHost();
     void writeLocalFtpTargetRow();
+    QString defaultEventStorageRoot() const;
+    QString currentEventStorageRoot() const;
+    QString currentEventExportRoot() const;
+    QStringList eventExportHosts() const;
+    void browseEventStorageRoot();
+    void saveEventStorageRoot();
+    void startEventExport();
+    void requestEventExportPage(const std::optional<QString>& cursor = std::nullopt);
+    void handleEventExportPage(rv1126b::ApiResult<rv1126b::EventPageDto> result);
+    void startNextEventExportTarget();
+    void exportNextEvent();
+    void handleExportEventDetail(
+        const rv1126b::EventSummaryDto& summary,
+        rv1126b::ApiResult<rv1126b::EventDetailDto> result);
+    void downloadNextExportFile();
+    void handleExportFileDownloaded(rv1126b::ApiResult<rv1126b::EvidenceDownloadResult> result);
+    void finishEventExport();
     void showRevisionConflict(const rv1126b::FtpConfigSnapshotDto& remote,
                               const rv1126b::FtpConfigUpdate& local,
                               const QStringList& passwordTargetIds);
@@ -81,7 +118,16 @@ private:
     QString deviceId_;
     rv1126b::DeviceOperationsController* controller_ = nullptr;
     rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
+    rv1126b::EventSyncService* eventSyncService_ = nullptr;
+    rv1126b::IBoardApiClient* boardApi_ = nullptr;
+    rv1126b::IBoardApiClient* currentExportApi_ = nullptr;
+    std::function<rv1126b::IBoardApiClient*(const QString&)> boardApiForHost_;
+    std::function<QString(const QString&)> deviceIdForHost_;
+    std::function<bool(const QString&)> storageRootChangeHandler_;
     QString localFtpRootPath_;
+    QString evidenceRootPath_;
+    QString storageRootPath_;
+    QString deviceEndpointText_;
     QTabWidget* tabs_ = nullptr;
     QLabel* globalMessage_ = nullptr;
 
@@ -101,6 +147,56 @@ private:
     QLabel* timeWriteLabel_ = nullptr;
     QPushButton* syncTimeButton_ = nullptr;
     bool timeSetEnabled_ = false;
+
+    QLabel* eventSyncStatus_ = nullptr;
+    QLabel* eventSyncModeLabel_ = nullptr;
+    QLabel* eventSyncRootLabel_ = nullptr;
+    QPushButton* eventSyncStartButton_ = nullptr;
+    QPushButton* eventSyncStopButton_ = nullptr;
+    QPushButton* eventSyncPollButton_ = nullptr;
+    QPushButton* eventSyncAllButton_ = nullptr;
+    QPushButton* eventSyncFromNowButton_ = nullptr;
+    QLineEdit* eventSyncHostsEdit_ = nullptr;
+    QSpinBox* eventExportDaysSpin_ = nullptr;
+    QLineEdit* eventStorageRootEdit_ = nullptr;
+    QPushButton* eventStorageBrowseButton_ = nullptr;
+    QPushButton* eventStorageSaveButton_ = nullptr;
+    QComboBox* eventExportRangeCombo_ = nullptr;
+    QCheckBox* exportEvidenceCheck_ = nullptr;
+    QCheckBox* exportSnapshotCheck_ = nullptr;
+    QCheckBox* exportFormalCheck_ = nullptr;
+    QCheckBox* exportOcrCheck_ = nullptr;
+    QCheckBox* exportDetailCheck_ = nullptr;
+    QCheckBox* exportSummaryCheck_ = nullptr;
+    QCheckBox* exportTrackMetaCheck_ = nullptr;
+    QLabel* eventExportStatus_ = nullptr;
+    QPushButton* eventExportButton_ = nullptr;
+    struct ExportFile {
+        QString url;
+        QString finalPath;
+        QString partPath;
+        bool optional = true;
+    };
+    QVector<rv1126b::EventSummaryDto> exportEvents_;
+    QVector<ExportFile> exportFiles_;
+    QStringList exportTargetHosts_;
+    QString exportRunRoot_;
+    QString exportTargetRoot_;
+    QString exportTargetDeviceId_;
+    QString exportTargetHost_;
+    int exportEventIndex_ = 0;
+    int exportFileIndex_ = 0;
+    int exportTargetIndex_ = 0;
+    int exportSucceeded_ = 0;
+    int exportFailed_ = 0;
+    bool exportInFlight_ = false;
+
+    QLabel* ispStatus_ = nullptr;
+    QLabel* ispCurrentLabel_ = nullptr;
+    QLabel* ispPersistedLabel_ = nullptr;
+    QPushButton* ispRefreshButton_ = nullptr;
+    QPushButton* ispSaveCurrentButton_ = nullptr;
+    QPushButton* ispClearButton_ = nullptr;
 
     QLabel* ftpRevisionLabel_ = nullptr;
     QSpinBox* retryMaxSpin_ = nullptr;

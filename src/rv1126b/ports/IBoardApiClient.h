@@ -38,6 +38,22 @@ public:
         const QString& partFilePath,
         QObject* context,
         ApiCompletion<EvidenceDownloadResult> completion) = 0;
+    virtual RequestId downloadFileToPartFile(
+        const QString& relativeUrl,
+        const QString& partFilePath,
+        QObject* context,
+        ApiCompletion<EvidenceDownloadResult> completion)
+    {
+        Q_UNUSED(relativeUrl)
+        Q_UNUSED(partFilePath)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("file_download_unsupported");
+        error.message = QStringLiteral("File download is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<EvidenceDownloadResult>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
     virtual RequestId putClientAck(
         const EventIdentity& identity,
         const ClientAckCreate& request,
@@ -132,6 +148,39 @@ public:
         error.message = QStringLiteral("Runtime configuration apply is not supported by this API client.");
         error.category = ApiErrorCategory::CapabilityDisabled;
         if (completion) completion(ApiResult<RuntimeApplyDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId getIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("isp_config_unsupported");
+        error.message = QStringLiteral("ISP configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<QJsonObject>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId saveCurrentIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("isp_config_unsupported");
+        error.message = QStringLiteral("ISP configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<QJsonObject>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId clearIspConfig(QObject* context, ApiCompletion<QJsonObject> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("isp_config_unsupported");
+        error.message = QStringLiteral("ISP configuration is not supported by this API client.");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<QJsonObject>::failure(std::move(error)));
         return RequestId::createUuid();
     }
 

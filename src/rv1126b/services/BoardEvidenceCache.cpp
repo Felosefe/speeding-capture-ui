@@ -1,4 +1,4 @@
-#include "BoardEvidenceCache.h"
+﻿#include "BoardEvidenceCache.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -31,6 +31,20 @@ constexpr std::array<int, 6> RetryBackoffSeconds {1, 2, 4, 8, 16, 30};
 bool hasIdentity(const VehicleEvent& event, const EventIdentity& identity)
 {
     return event.identity == identity;
+}
+
+QString imageCacheRole(const VehicleEvent& event)
+{
+    const QString url = event.evidenceRelativeUrl.trimmed().toLower();
+    if (url.contains(QStringLiteral("snapshot"))) {
+        return QStringLiteral("snapshot");
+    }
+    return QStringLiteral("evidence");
+}
+
+bool sameRemoteImageUrl(const QString& left, const QString& right)
+{
+    return left.trimmed() == right.trimmed();
 }
 
 } // namespace
@@ -81,11 +95,32 @@ void BoardEvidenceCache::enqueue(const VehicleEvent& event)
 
     const QString finalPath = finalPathFor(event);
     if (QFileInfo::exists(finalPath)) {
-        EvidenceCacheEntry entry = entryFor(event, EvidenceCacheStatus::Available);
-        entry.localFilePath = finalPath;
-        entry.contentLength = QFileInfo(finalPath).size();
-        persistState(entry);
-        return;
+        bool reuseCachedFile = true;
+        if (repository_) {
+            bool completed = false;
+            repository_->loadEvidenceState(
+                event.identity,
+                QStringLiteral("evidence"),
+                this,
+                [&reuseCachedFile, &completed, &event](ApiResult<std::optional<EvidenceCacheEntry>> result) {
+                    completed = true;
+                    if (result.isSuccess() && result.value().has_value()
+                        && !sameRemoteImageUrl(result.value()->remoteRelativeUrl, event.evidenceRelativeUrl)) {
+                        reuseCachedFile = false;
+                    }
+                });
+            if (!completed) {
+                reuseCachedFile = true;
+            }
+        }
+        if (reuseCachedFile) {
+            EvidenceCacheEntry entry = entryFor(event, EvidenceCacheStatus::Available);
+            entry.localFilePath = finalPath;
+            entry.contentLength = QFileInfo(finalPath).size();
+            persistState(entry);
+            return;
+        }
+        QFile::remove(finalPath);
     }
 
     if (queuedIdentities_.contains(event.identity) || active_.contains(event.identity)) {
@@ -448,9 +483,10 @@ QString BoardEvidenceCache::partPathFor(const VehicleEvent& event) const
 
 QString BoardEvidenceCache::eventFileStem(const VehicleEvent& event) const
 {
-    return QStringLiteral("%1_%2_evidence")
+    return QStringLiteral("%1_%2_%3")
         .arg(event.identity.eventId)
-        .arg(event.identity.trackId);
+        .arg(event.identity.trackId)
+        .arg(imageCacheRole(event));
 }
 
 QString BoardEvidenceCache::sanitizePathSegment(const QString& value) const

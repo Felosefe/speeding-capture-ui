@@ -1226,12 +1226,60 @@ void MainWindow::openDeviceConfig()
             statusBar()->showMessage(QStringLiteral("当前设备的配置与 FTP 服务尚未装配"), 5000);
             return;
         }
-        Rv1126bDeviceManagementDialog dialog(
+        auto boardApiForHost = [this](const QString& host) -> rv1126b::IBoardApiClient* {
+            if (!deviceModel_ || !boardApiForDevice_) return nullptr;
+            const QString wanted = host.trimmed();
+            for (int i = 0; i < deviceModel_->deviceCount(); ++i) {
+                const Device* candidate = deviceModel_->deviceAt(i);
+                if (!candidate) continue;
+                const QUrl apiUrl(candidate->apiUrl);
+                const bool match = candidate->ipAddress.compare(wanted, Qt::CaseInsensitive) == 0
+                    || apiUrl.host().compare(wanted, Qt::CaseInsensitive) == 0
+                    || candidate->id.compare(wanted, Qt::CaseInsensitive) == 0;
+                if (match) return boardApiForDevice_(candidate->id);
+            }
+            return nullptr;
+        };
+        auto deviceIdForHost = [this](const QString& host) -> QString {
+            if (!deviceModel_) return {};
+            const QString wanted = host.trimmed();
+            for (int i = 0; i < deviceModel_->deviceCount(); ++i) {
+                const Device* candidate = deviceModel_->deviceAt(i);
+                if (!candidate) continue;
+                const QUrl apiUrl(candidate->apiUrl);
+                const bool match = candidate->ipAddress.compare(wanted, Qt::CaseInsensitive) == 0
+                    || apiUrl.host().compare(wanted, Qt::CaseInsensitive) == 0
+                    || candidate->id.compare(wanted, Qt::CaseInsensitive) == 0;
+                if (match) return candidate->id;
+            }
+            return {};
+        };
+        auto saveStorageRoot = [this](const QString& root) -> bool {
+            SystemSettings next = currentSystemSettings_;
+            next.storage.rootPath = QDir::cleanPath(root);
+            if (!systemSettingsService_->save(next)) return false;
+            currentSystemSettings_ = systemSettingsService_->settings();
+            if (switchEvidenceRoot_) {
+                const QString newEvidenceRoot = QDir(currentSystemSettings_.storage.rootPath)
+                                                    .filePath(QStringLiteral("rv1126b/events"));
+                if (switchEvidenceRoot_(newEvidenceRoot)) evidenceRootPath_ = newEvidenceRoot;
+            }
+            applySystemSettings();
+            return true;
+        };        Rv1126bDeviceManagementDialog dialog(
             device->id, operationsController_,
             online ? Rv1126bDeviceManagementDialog::InitialPage::Evidence
                    : Rv1126bDeviceManagementDialog::InitialPage::FtpTasks,
             this, online, ftpReceiveServer_,
-            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")));
+            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")),
+            eventSyncForDevice_ ? eventSyncForDevice_(device->id) : nullptr,
+            evidenceRootPath_,
+            QStringLiteral("%1:%2").arg(device->ipAddress).arg(device->port),
+            boardApiForDevice_ ? boardApiForDevice_(device->id) : nullptr,
+            boardApiForHost,
+            deviceIdForHost,
+            currentSystemSettings_.storage.rootPath,
+            saveStorageRoot);
         dialog.exec();
         return;
     }
@@ -1302,10 +1350,58 @@ void MainWindow::syncSelectedDeviceTime()
             statusBar()->showMessage(QStringLiteral("当前设备的时间服务尚未装配"), 5000);
             return;
         }
-        Rv1126bDeviceManagementDialog dialog(
+        auto boardApiForHost = [this](const QString& host) -> rv1126b::IBoardApiClient* {
+            if (!deviceModel_ || !boardApiForDevice_) return nullptr;
+            const QString wanted = host.trimmed();
+            for (int i = 0; i < deviceModel_->deviceCount(); ++i) {
+                const Device* candidate = deviceModel_->deviceAt(i);
+                if (!candidate) continue;
+                const QUrl apiUrl(candidate->apiUrl);
+                const bool match = candidate->ipAddress.compare(wanted, Qt::CaseInsensitive) == 0
+                    || apiUrl.host().compare(wanted, Qt::CaseInsensitive) == 0
+                    || candidate->id.compare(wanted, Qt::CaseInsensitive) == 0;
+                if (match) return boardApiForDevice_(candidate->id);
+            }
+            return nullptr;
+        };
+        auto deviceIdForHost = [this](const QString& host) -> QString {
+            if (!deviceModel_) return {};
+            const QString wanted = host.trimmed();
+            for (int i = 0; i < deviceModel_->deviceCount(); ++i) {
+                const Device* candidate = deviceModel_->deviceAt(i);
+                if (!candidate) continue;
+                const QUrl apiUrl(candidate->apiUrl);
+                const bool match = candidate->ipAddress.compare(wanted, Qt::CaseInsensitive) == 0
+                    || apiUrl.host().compare(wanted, Qt::CaseInsensitive) == 0
+                    || candidate->id.compare(wanted, Qt::CaseInsensitive) == 0;
+                if (match) return candidate->id;
+            }
+            return {};
+        };
+        auto saveStorageRoot = [this](const QString& root) -> bool {
+            SystemSettings next = currentSystemSettings_;
+            next.storage.rootPath = QDir::cleanPath(root);
+            if (!systemSettingsService_->save(next)) return false;
+            currentSystemSettings_ = systemSettingsService_->settings();
+            if (switchEvidenceRoot_) {
+                const QString newEvidenceRoot = QDir(currentSystemSettings_.storage.rootPath)
+                                                    .filePath(QStringLiteral("rv1126b/events"));
+                if (switchEvidenceRoot_(newEvidenceRoot)) evidenceRootPath_ = newEvidenceRoot;
+            }
+            applySystemSettings();
+            return true;
+        };        Rv1126bDeviceManagementDialog dialog(
             device->id, operationsController_,
             Rv1126bDeviceManagementDialog::InitialPage::Time, this, true, ftpReceiveServer_,
-            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")));
+            QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")),
+            eventSyncForDevice_ ? eventSyncForDevice_(device->id) : nullptr,
+            evidenceRootPath_,
+            QStringLiteral("%1:%2").arg(device->ipAddress).arg(device->port),
+            boardApiForDevice_ ? boardApiForDevice_(device->id) : nullptr,
+            boardApiForHost,
+            deviceIdForHost,
+            currentSystemSettings_.storage.rootPath,
+            saveStorageRoot);
         dialog.exec();
         return;
     }
