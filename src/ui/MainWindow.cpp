@@ -816,6 +816,18 @@ QWidget *MainWindow::createCaptureRecordPanel()
                 this, [this]()
                 { historyPage_ = 0; refreshCaptureRecords(); });
         controls->addWidget(eventDeviceScopeCombo_);
+
+        eventTimeRangeCombo_ = new QComboBox(panel);
+        eventTimeRangeCombo_->setObjectName(QStringLiteral("eventTimeRangeCombo"));
+        eventTimeRangeCombo_->addItem(QStringLiteral("最近 1 天"), 1);
+        eventTimeRangeCombo_->addItem(QStringLiteral("最近 2 天"), 2);
+        eventTimeRangeCombo_->addItem(QStringLiteral("最近 7 天"), 7);
+        eventTimeRangeCombo_->addItem(QStringLiteral("全部"), 0);
+        eventTimeRangeCombo_->setToolTip(QStringLiteral("只查看最近指定天数内的本地缓存事件；选择“全部”则不做时间过滤。"));
+        connect(eventTimeRangeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]()
+                { historyPage_ = 0; refreshCaptureRecords(); });
+        controls->addWidget(eventTimeRangeCombo_);
     }
 
     auto *refreshButton = new QToolButton(panel);
@@ -1136,8 +1148,29 @@ rv1126b::EventQuery MainWindow::currentEventQuery() const
         query.limit = qMax(1, currentSystemSettings_.ui.captureListMaxRows);
         query.offset = 0;
     }
+
+    // 时间范围：默认“最近 1 天”，避免把本地 SQLite 缓存里的旧事件（如换板前的历史数据）
+    // 一起显示出来。app_api /api/v1/events 只接受 limit/cursor，无法按时间服务端过滤，
+    // 因此这里按本地 event_epoch_ms（eventTime.epochMs）做下限过滤。
+    const qint64 recentStartMs = recentRangeStartEpochMs();
+    if (recentStartMs > 0)
+    {
+        if (!query.startEpochMs || *query.startEpochMs < recentStartMs)
+            query.startEpochMs = recentStartMs;
+    }
+
     query.newestFirst = true;
     return query;
+}
+
+qint64 MainWindow::recentRangeStartEpochMs() const
+{
+    if (!eventTimeRangeCombo_)
+        return 0;
+    const int days = eventTimeRangeCombo_->currentData().toInt();
+    if (days <= 0)
+        return 0;
+    return QDateTime::currentDateTime().addDays(-days).toMSecsSinceEpoch();
 }
 
 const rv1126b::VehicleEvent *MainWindow::currentVehicleEvent() const
@@ -1468,8 +1501,7 @@ void MainWindow::refreshCaptureRecords()
         }
         else
         {
-            eventController_->refreshRealtime(query.deviceId.value_or(QString()),
-                                              !query.deviceId.has_value(), query.limit);
+            eventController_->refreshRealtime(query);
         }
         return;
     }

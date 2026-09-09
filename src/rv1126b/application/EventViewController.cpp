@@ -1,4 +1,4 @@
-﻿#include "EventViewController.h"
+#include "EventViewController.h"
 
 #include <QDir>
 #include <QFile>
@@ -109,9 +109,7 @@ void EventViewController::attachSyncService(EventSyncService* service)
             [this](const QString& healthyDeviceId) {
                 emit syncHealthy(healthyDeviceId);
                 if (!paused_) {
-                    realtimeMode_ ? refreshRealtime(currentQuery_.deviceId.value_or(QString()),
-                                                    !currentQuery_.deviceId.has_value(),
-                                                    currentQuery_.limit)
+                    realtimeMode_ ? refreshRealtime(currentQuery_)
                                   : queryHistory(currentQuery_);
                 }
             });
@@ -157,13 +155,8 @@ void EventViewController::setSyncEnabled(bool enabled)
 
 bool EventViewController::syncEnabled() const { return syncEnabled_; }
 
-void EventViewController::refreshRealtime(const QString& deviceId, bool allDevices, int limit)
+void EventViewController::refreshRealtime(const EventQuery& query)
 {
-    EventQuery query;
-    if (!allDevices && !deviceId.isEmpty()) query.deviceId = deviceId;
-    query.limit = std::max(1, limit);
-    query.offset = 0;
-    query.newestFirst = true;
     currentQuery_ = query;
     realtimeMode_ = true;
     queryHistory(query);
@@ -224,8 +217,7 @@ void EventViewController::setPaused(bool paused)
         pendingChangeCount_ = 0;
         emit pendingChangeCountChanged(0);
         if (realtimeMode_) {
-            refreshRealtime(currentQuery_.deviceId.value_or(QString()),
-                            !currentQuery_.deviceId.has_value(), currentQuery_.limit);
+            refreshRealtime(currentQuery_);
         } else {
             queryHistory(currentQuery_);
             realtimeMode_ = false;

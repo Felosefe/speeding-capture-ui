@@ -152,6 +152,7 @@ private:
     CaptureRecordFilter currentCaptureFilter() const;
     CaptureAssetKind storageKindForRecord(const CaptureRecord& record) const;
     rv1126b::EventQuery currentEventQuery() const;
+    qint64 recentRangeStartEpochMs() const;
     const rv1126b::VehicleEvent* currentVehicleEvent() const;
     bool selectedEventDeviceOnline() const;
 
@@ -182,6 +183,7 @@ private:
     QLabel* pendingCaptureLabel_ = nullptr;
     QComboBox* eventModeCombo_ = nullptr;
     QComboBox* eventDeviceScopeCombo_ = nullptr;
+    QComboBox* eventTimeRangeCombo_ = nullptr;
     QWidget* historyFilterWidget_ = nullptr;
     QLineEdit* historyPlateEdit_ = nullptr;
     QCheckBox* historyTimeRangeCheck_ = nullptr;

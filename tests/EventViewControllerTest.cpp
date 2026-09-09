@@ -188,7 +188,10 @@ void EventViewControllerTest::exactChangesUpsertAndCacheEvidence()
     controller.setDeviceSession(snapshot);
     QCOMPARE(sync.startCount, 1);
 
-    controller.refreshRealtime(QStringLiteral("dev-a"), false, 100);
+    EventQuery realtimeQuery;
+    realtimeQuery.deviceId = QStringLiteral("dev-a");
+    realtimeQuery.limit = 100;
+    controller.refreshRealtime(realtimeQuery);
     QSignalSpy upsertSpy(&controller, &EventViewController::eventUpserted);
     repository.events[0].ocrStatus.value = OcrStatus::Matched;
     repository.events[0].plateText = QStringLiteral("粤B12345");

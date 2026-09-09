@@ -33,7 +33,7 @@ public:
     int pendingChangeCount() const;
     void attachSyncService(EventSyncService* service);
     void setDeviceSession(const DeviceSessionSnapshot& snapshot);
-    void refreshRealtime(const QString& deviceId, bool allDevices, int limit);
+    void refreshRealtime(const EventQuery& query);
     void queryHistory(const EventQuery& query);
     void setPaused(bool paused);
     void setSyncEnabled(bool enabled);
