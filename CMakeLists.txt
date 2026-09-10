@@ -5,6 +5,11 @@ project(CameraManagerApp
     LANGUAGES CXX
 )
 
+set(VIDEO_STREAMS_CONTROLLER_SOURCES
+    src/rv1126b/application/VideoStreamsController.cpp
+    src/rv1126b/application/VideoStreamsController.h
+)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -30,6 +35,7 @@ set(RTSP_PLAYER_SOURCES
 )
 
 qt_add_executable(CameraManagerApp
+    ${VIDEO_STREAMS_CONTROLLER_SOURCES}
     ${RTSP_PLAYER_SOURCES}
     src/main.cpp
     src/device/IDeviceClient.cpp
@@ -343,6 +349,7 @@ set_tests_properties(DeviceIntegrationControllerTest PROPERTIES
 )
 
 qt_add_executable(DeviceIntegrationUiTest
+    ${VIDEO_STREAMS_CONTROLLER_SOURCES}
     tests/DeviceIntegrationUiTest.cpp
     src/rv1126b/application/DeviceIntegrationController.cpp
     src/rv1126b/application/DeviceIntegrationController.h
@@ -361,6 +368,18 @@ qt_add_executable(DeviceIntegrationUiTest
     src/ui/LivePreviewPanel.cpp
     src/ui/LivePreviewPanel.h
 )
+
+qt_add_executable(VideoStreamsTest
+    tests/VideoStreamsTest.cpp
+    ${VIDEO_STREAMS_CONTROLLER_SOURCES}
+    src/rv1126b/ports/IRtspPlayer.h
+    src/ui/LivePreviewPanel.cpp
+    src/ui/LivePreviewPanel.h
+)
+target_link_libraries(VideoStreamsTest PRIVATE Qt6::Widgets Qt6::Network Qt6::Test)
+target_compile_options(VideoStreamsTest PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_test(NAME VideoStreamsTest COMMAND VideoStreamsTest)
+set_tests_properties(VideoStreamsTest PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 target_link_libraries(DeviceIntegrationUiTest
     PRIVATE

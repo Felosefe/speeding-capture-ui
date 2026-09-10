@@ -13,6 +13,11 @@ class ApiCodecTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void videoStreamsReadAndWrite();
+    void videoStreamsRejectInvalidResponses_data();
+    void videoStreamsRejectInvalidResponses();
+    void videoStreamsRejectInvalidWrites_data();
+    void videoStreamsRejectInvalidWrites();
     void parsesDiscoveryAndRejectsMismatchedNonce();
     void parsesHealthAndEventPageFixtures();
     void parsesLatestEventUrlsCaptureAndTimeQuality();
@@ -401,6 +406,111 @@ void ApiCodecTest::encodesFtpRequestsAndRejectsInvalidValues()
     QVERIFY(parsedAck.isSuccess());
     QCOMPARE(parsedAck.value().clientId, QStringLiteral("qt_primary"));
     QCOMPARE(parsedAck.value().trackId, 2LL);
+}
+
+void ApiCodecTest::videoStreamsReadAndWrite()
+{
+    BoardApiCodec codec;
+    auto object = jsonObject(fixture(QStringLiteral("video_streams.json")));
+    object.insert(QStringLiteral("future_field"), true);
+    const auto parsed = codec.parseVideoStreamsConfig(QJsonDocument(object).toJson());
+    QVERIFY(parsed);
+    QCOMPARE(parsed.value().main.codec, QStringLiteral("h265"));
+    QCOMPARE(parsed.value().sub.codec, QStringLiteral("h264"));
+    QCOMPARE(parsed.value().main.width, 2560);
+    QCOMPARE(parsed.value().sub.height, 1080);
+    auto oldMain = object.value(QStringLiteral("main")).toObject();
+    oldMain.insert(QStringLiteral("width"), 3840);
+    oldMain.insert(QStringLiteral("height"), 2160);
+    object.insert(QStringLiteral("main"), oldMain);
+    const auto oldProfile = codec.parseVideoStreamsConfig(QJsonDocument(object).toJson());
+    QVERIFY(oldProfile);
+    QCOMPARE(oldProfile.value().main.width, 3840);
+    VideoStreamsUpdate update;
+    update.expectedRevision = parsed.value().revision;
+    const QStringList codecs{QStringLiteral("h264"), QStringLiteral("h265")};
+    for (const QString& mainCodec : codecs) {
+        for (const QString& subCodec : codecs) {
+            update.main.codec = mainCodec;
+            update.sub.codec = subCodec;
+            const auto encoded = codec.encodeVideoStreamsConfig(update);
+            QVERIFY(encoded);
+            const auto body = jsonObject(encoded.value());
+            QCOMPARE(body.value(QStringLiteral("expected_revision")).toString(), QStringLiteral("video-r1"));
+            QCOMPARE(body.value(QStringLiteral("main")).toObject().value(QStringLiteral("width")).toInt(), 2560);
+            QCOMPARE(body.value(QStringLiteral("sub")).toObject().value(QStringLiteral("height")).toInt(), 1080);
+            QCOMPARE(body.value(QStringLiteral("main")).toObject().value(QStringLiteral("codec")).toString(), mainCodec);
+            QCOMPARE(body.value(QStringLiteral("sub")).toObject().value(QStringLiteral("codec")).toString(), subCodec);
+        }
+    }
+}
+
+void ApiCodecTest::videoStreamsRejectInvalidResponses_data()
+{
+    QTest::addColumn<QByteArray>("payload");
+    auto original = jsonObject(fixture(QStringLiteral("video_streams.json")));
+    for (const QString& field : {QStringLiteral("api_version"), QStringLiteral("revision"),
+         QStringLiteral("runtime_revision"), QStringLiteral("write_enabled"), QStringLiteral("restart_required"),
+         QStringLiteral("main"), QStringLiteral("sub")}) {
+        auto object = original;
+        object.remove(field);
+        QTest::newRow(qPrintable(QStringLiteral("missing-") + field)) << QJsonDocument(object).toJson();
+    }
+    const QList<QJsonValue> invalidDimensions{0, -1, 1.5, 2147483648.0, QStringLiteral("2560"), QJsonValue()};
+    int row = 0;
+    for (const auto& value : invalidDimensions) {
+        auto object = original;
+        auto main = object.value(QStringLiteral("main")).toObject();
+        main.insert(QStringLiteral("width"), value);
+        object.insert(QStringLiteral("main"), main);
+        QTest::newRow(qPrintable(QStringLiteral("dimension-%1").arg(row++))) << QJsonDocument(object).toJson();
+    }
+    for (const QString& value : {QStringLiteral("hevc"), QStringLiteral("H264"), QString()}) {
+        auto object = original;
+        auto sub = object.value(QStringLiteral("sub")).toObject();
+        sub.insert(QStringLiteral("codec"), value);
+        object.insert(QStringLiteral("sub"), sub);
+        QTest::newRow(qPrintable(QStringLiteral("codec-") + value)) << QJsonDocument(object).toJson();
+    }
+    original.insert(QStringLiteral("runtime_revision"), QString());
+    QTest::newRow("empty-runtime-revision") << QJsonDocument(original).toJson();
+    QTest::newRow("malformed-json") << QByteArrayLiteral("{bad");
+}
+
+void ApiCodecTest::videoStreamsRejectInvalidResponses()
+{
+    QFETCH(QByteArray, payload);
+    BoardApiCodec codec;
+    const auto result = codec.parseVideoStreamsConfig(payload);
+    QVERIFY(!result);
+    QCOMPARE(result.error().category, ApiErrorCategory::Protocol);
+}
+
+void ApiCodecTest::videoStreamsRejectInvalidWrites_data()
+{
+    QTest::addColumn<QString>("field");
+    for (const QString& field : {QStringLiteral("revision"), QStringLiteral("mainWidth"),
+         QStringLiteral("mainHeight"), QStringLiteral("subWidth"), QStringLiteral("subHeight"),
+         QStringLiteral("mainCodec"), QStringLiteral("subCodec")})
+        QTest::newRow(qPrintable(field)) << field;
+}
+
+void ApiCodecTest::videoStreamsRejectInvalidWrites()
+{
+    QFETCH(QString, field);
+    BoardApiCodec codec;
+    VideoStreamsUpdate update;
+    update.expectedRevision = QStringLiteral("r1");
+    if (field == QStringLiteral("revision")) update.expectedRevision = QStringLiteral(" ");
+    if (field == QStringLiteral("mainWidth")) update.main.width = 1920;
+    if (field == QStringLiteral("mainHeight")) update.main.height = 1080;
+    if (field == QStringLiteral("subWidth")) update.sub.width = 1280;
+    if (field == QStringLiteral("subHeight")) update.sub.height = 720;
+    if (field == QStringLiteral("mainCodec")) update.main.codec = QStringLiteral("H265");
+    if (field == QStringLiteral("subCodec")) update.sub.codec = QStringLiteral("mjpeg");
+    const auto result = codec.encodeVideoStreamsConfig(update);
+    QVERIFY(!result);
+    QCOMPARE(result.error().category, ApiErrorCategory::Validation);
 }
 
 QTEST_MAIN(ApiCodecTest)

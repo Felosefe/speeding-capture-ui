@@ -23,6 +23,8 @@ public:
     virtual ApiResult<EventDetailDto> parseEventDetail(const QByteArray& payload) const = 0;
     virtual ApiResult<EvidenceConfigDto> parseEvidenceConfig(const QByteArray& payload) const = 0;
     virtual ApiResult<TimeStatusDto> parseTimeStatus(const QByteArray& payload) const = 0;
+    virtual ApiResult<VideoStreamsConfigDto> parseVideoStreamsConfig(const QByteArray& payload) const = 0;
+    virtual ApiResult<QByteArray> encodeVideoStreamsConfig(const VideoStreamsUpdate& update) const = 0;
     virtual ApiResult<TriggerModeConfigDto> parseTriggerModeConfig(const QByteArray& payload) const = 0;
     virtual ApiResult<LineRegionConfigDto> parseLineRegionConfig(const QByteArray& payload) const = 0;
     virtual ApiResult<RuntimeApplyDto> parseRuntimeApply(const QByteArray& payload) const = 0;

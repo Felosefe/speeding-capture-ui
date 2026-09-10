@@ -173,6 +173,29 @@ RequestId BoardApiClient::putClientAck(
         [this](const QByteArray& payload) { return codec_->parseClientAck(payload); });
 }
 
+RequestId BoardApiClient::getVideoStreamsConfig(QObject* context, ApiCompletion<VideoStreamsConfigDto> completion)
+{
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/video-streams"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::GetOperation, url, {}, context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseVideoStreamsConfig(payload); });
+}
+
+RequestId BoardApiClient::putVideoStreamsConfig(const VideoStreamsUpdate& update, QObject* context,
+                                             ApiCompletion<VideoStreamsConfigDto> completion)
+{
+    if (!codec_) return returnTypedError(context, std::move(completion), localError(
+        QStringLiteral("rv1126b.api.invalid_dependencies"), QStringLiteral("Missing API codec."), ApiErrorCategory::Validation));
+    const auto body = codec_->encodeVideoStreamsConfig(update);
+    if (!body) return returnTypedError(context, std::move(completion), body.error());
+    ApiError error;
+    const QUrl url = endpointUrl(QStringLiteral("/api/v1/config/video-streams"), &error);
+    if (!error.code.isEmpty()) return returnTypedError(context, std::move(completion), error);
+    return startDecodedJson(QNetworkAccessManager::PutOperation, url, body.value(), context, std::move(completion),
+        [this](const QByteArray& payload) { return codec_->parseVideoStreamsConfig(payload); });
+}
+
 RequestId BoardApiClient::getEvidenceConfig(QObject* context, ApiCompletion<EvidenceConfigDto> completion)
 {
     ApiError error;

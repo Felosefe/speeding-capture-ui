@@ -156,6 +156,43 @@ struct TimeStatusDto {
     QJsonObject rawJson;
 };
 
+struct VideoStreamSettings {
+    int width = 0;
+    int height = 0;
+    QString codec = QStringLiteral("h264");
+};
+
+inline bool operator==(const VideoStreamSettings& a, const VideoStreamSettings& b)
+{
+    return a.width == b.width && a.height == b.height && a.codec == b.codec;
+}
+
+inline VideoStreamSettings mainVideoStreamDefaults()
+{
+    return {2560, 1440, QStringLiteral("h264")};
+}
+
+inline VideoStreamSettings subVideoStreamDefaults()
+{
+    return {1920, 1080, QStringLiteral("h264")};
+}
+
+struct VideoStreamsConfigDto {
+    QString apiVersion;
+    QString revision;
+    QString runtimeRevision;
+    bool writeEnabled = false;
+    bool restartRequired = false;
+    VideoStreamSettings main;
+    VideoStreamSettings sub;
+};
+
+struct VideoStreamsUpdate {
+    QString expectedRevision;
+    VideoStreamSettings main = mainVideoStreamDefaults();
+    VideoStreamSettings sub = subVideoStreamDefaults();
+};
+
 struct TriggerModeConfigDto {
     QString apiVersion;
     QString revision;

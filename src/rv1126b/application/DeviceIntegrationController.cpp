@@ -341,6 +341,13 @@ void DeviceIntegrationController::setStreamRole(RtspStreamRole role)
     openSelectedStream();
 }
 
+void DeviceIntegrationController::restartSelectedStream(const QString& deviceId)
+{
+    if (!deviceId.isEmpty() && deviceId == selectedVideoDeviceId_ && deviceId == playbackDeviceId_
+        && !playbackSuspended_ && !shutdown_)
+        openSelectedStream();
+}
+
 void DeviceIntegrationController::setPlaybackSuspended(bool suspended)
 {
     if (playbackSuspended_ == suspended) return;

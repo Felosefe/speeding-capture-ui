@@ -10,6 +10,7 @@
 #include <QPen>
 #include <QPushButton>
 #include <QStackedLayout>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -349,9 +350,9 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     stateLabel_->setObjectName(QStringLiteral("livePlaybackStateLabel"));
     streamCombo_ = new QComboBox(this);
     streamCombo_->setObjectName(QStringLiteral("rtspStreamRoleCombo"));
-    streamCombo_->addItem(QStringLiteral("辅码流 /live/1"),
+    streamCombo_->addItem(QStringLiteral("辅码流 1080p（1920×1080）"),
                           static_cast<int>(rv1126b::RtspStreamRole::Sub));
-    streamCombo_->addItem(QStringLiteral("主码流 /live/0"),
+    streamCombo_->addItem(QStringLiteral("主码流 2K（2560×1440）"),
                           static_cast<int>(rv1126b::RtspStreamRole::Main));
 
     triggerModeCombo_ = new QComboBox(this);
@@ -389,8 +390,48 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     header->addWidget(refreshDetectionButton_);
     header->addWidget(saveDetectionButton_);
     header->addWidget(stateLabel_);
-    header->addWidget(streamCombo_);
     root->addLayout(header);
+
+    videoController_ = new rv1126b::VideoStreamsController(this);
+    auto* streamControls = new QHBoxLayout;
+    streamControls->addWidget(new QLabel(QStringLiteral("目标码流"), this));
+    streamControls->addWidget(streamCombo_);
+    videoCodecCombo_ = new QComboBox(this);
+    videoCodecCombo_->setObjectName(QStringLiteral("rtspVideoCodecCombo"));
+    videoCodecCombo_->addItem(QStringLiteral("H.264"), QStringLiteral("h264"));
+    videoCodecCombo_->addItem(QStringLiteral("H.265"), QStringLiteral("h265"));
+    streamControls->addWidget(new QLabel(QStringLiteral("编码"), this));
+    streamControls->addWidget(videoCodecCombo_);
+    applyVideoButton_ = new QPushButton(QStringLiteral("应用码流设置"), this);
+    applyVideoButton_->setObjectName(QStringLiteral("applyVideoStreamsButton"));
+    refreshVideoButton_ = new QPushButton(QStringLiteral("刷新"), this);
+    refreshVideoButton_->setObjectName(QStringLiteral("refreshVideoStreamsButton"));
+    streamControls->addWidget(applyVideoButton_);
+    streamControls->addWidget(refreshVideoButton_);
+    actualResolutionLabel_ = new QLabel(this);
+    actualResolutionLabel_->setObjectName(QStringLiteral("rtspActualResolutionLabel"));
+    clearActualResolution();
+    streamControls->addWidget(actualResolutionLabel_);
+    streamControls->addStretch();
+    root->addLayout(streamControls);
+    videoConfigStatus_ = new QLabel(this);
+    videoConfigStatus_->setObjectName(QStringLiteral("videoStreamsStatusLabel"));
+    videoConfigStatus_->setWordWrap(true);
+    root->addWidget(videoConfigStatus_);
+    connect(videoController_, &rv1126b::VideoStreamsController::changed,
+            this, &LivePreviewPanel::updateVideoControls);
+    connect(videoController_, &rv1126b::VideoStreamsController::previewRestartRequested,
+            this, [this](const QString& deviceId) {
+                clearActualResolution();
+                emit previewRestartRequested(deviceId);
+            });
+    connect(videoCodecCombo_, &QComboBox::currentIndexChanged, this, [this] {
+        videoController_->setCodec(static_cast<rv1126b::RtspStreamRole>(streamCombo_->currentData().toInt()),
+                                   videoCodecCombo_->currentData().toString());
+    });
+    connect(applyVideoButton_, &QPushButton::clicked, videoController_, &rv1126b::VideoStreamsController::apply);
+    connect(refreshVideoButton_, &QPushButton::clicked, videoController_, &rv1126b::VideoStreamsController::refresh);
+    updateVideoControls();
 
     QWidget* output = player ? player->outputWidget() : nullptr;
     if (output) {
@@ -421,6 +462,8 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     }
 
     connect(streamCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
+        clearActualResolution();
+        updateVideoControls();
         emit streamRoleChanged(static_cast<rv1126b::RtspStreamRole>(
             streamCombo_->currentData().toInt()));
     });
@@ -450,6 +493,14 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     if (player) {
         connect(player, &rv1126b::IRtspPlayer::videoFrameReceived, this, [this](const QSize& frameSize) {
             if (lineOverlay_) lineOverlay_->setFrameSize(frameSize);
+            if (!frameSize.isValid()) return;
+            const auto target = streamCombo_->currentData().toInt() == static_cast<int>(rv1126b::RtspStreamRole::Main)
+                ? rv1126b::mainVideoStreamDefaults() : rv1126b::subVideoStreamDefaults();
+            const bool matches = frameSize == QSize(target.width, target.height);
+            actualResolutionLabel_->setText(QStringLiteral("实际：%1×%2%3")
+                .arg(frameSize.width()).arg(frameSize.height())
+                .arg(matches ? QString() : QStringLiteral("（与目标不符）")));
+            actualResolutionLabel_->setStyleSheet(matches ? QString() : QStringLiteral("color: #b42318;"));
         });
     }
     setDetectionBusy(false);
@@ -464,6 +515,8 @@ void LivePreviewPanel::setCurrentDevice(const QString& deviceId)
                               ? QStringLiteral("实时预览")
                               : QStringLiteral("实时预览 · %1").arg(deviceId));
     if (!changed) return;
+    clearActualResolution();
+    videoController_->setDevice(deviceId, nullptr);
     triggerModeConfig_.reset();
     lineRegionConfig_.reset();
     triggerModeDirty_ = false;
@@ -472,8 +525,9 @@ void LivePreviewPanel::setCurrentDevice(const QString& deviceId)
     loadDetectionConfig();
 }
 
-void LivePreviewPanel::setBoardApiClient(rv1126b::IBoardApiClient* boardApi)
+void LivePreviewPanel::setBoardApiClient(rv1126b::IBoardApiClient* boardApi, bool videoConfigAvailable)
 {
+    videoController_->setDevice(currentDeviceId_, videoConfigAvailable ? boardApi : nullptr);
     if (boardApi_ == boardApi) return;
     boardApi_ = boardApi;
     triggerModeConfig_.reset();
@@ -485,6 +539,7 @@ void LivePreviewPanel::setBoardApiClient(rv1126b::IBoardApiClient* boardApi)
 
 void LivePreviewPanel::setPlaybackState(rv1126b::RtspPlayerState state)
 {
+    if (state != rv1126b::RtspPlayerState::Playing) clearActualResolution();
     stateLabel_->setText(playbackStateText(state));
     stateLabel_->setStyleSheet(state == rv1126b::RtspPlayerState::Error
                                    ? QStringLiteral("color: #b42318;")
@@ -497,6 +552,25 @@ void LivePreviewPanel::setPlaybackError(const rv1126b::ApiError& error)
                              ? QStringLiteral("视频播放失败，等待重连")
                              : error.message);
     stateLabel_->setStyleSheet(QStringLiteral("color: #b42318;"));
+}
+
+void LivePreviewPanel::clearActualResolution()
+{
+    actualResolutionLabel_->setText(QStringLiteral("实际分辨率：等待视频帧"));
+    actualResolutionLabel_->setStyleSheet(QString());
+}
+
+void LivePreviewPanel::updateVideoControls()
+{
+    const QSignalBlocker blocker(videoCodecCombo_);
+    const auto role = static_cast<rv1126b::RtspStreamRole>(streamCombo_->currentData().toInt());
+    videoCodecCombo_->setCurrentIndex(videoController_->hasConfig()
+        ? videoCodecCombo_->findData(videoController_->codec(role)) : -1);
+    videoCodecCombo_->setEnabled(videoController_->editable());
+    applyVideoButton_->setEnabled(videoController_->canApply());
+    refreshVideoButton_->setEnabled(videoController_->available() && !videoController_->busy());
+    videoConfigStatus_->setText(videoController_->status());
+    videoConfigStatus_->setStyleSheet(videoController_->hasError() ? QStringLiteral("color: #b42318;") : QString());
 }
 
 bool LivePreviewPanel::eventFilter(QObject* watched, QEvent* event)
