@@ -84,6 +84,30 @@ public:
         QObject* context,
         ApiCompletion<TimeStatusDto> completion) = 0;
 
+    virtual RequestId getVideoStreamsConfig(QObject* context, ApiCompletion<VideoStreamsConfigDto> completion)
+    {
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("video_streams_config_unsupported");
+        error.message = QStringLiteral("设备不支持码流配置，请升级板端接口");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<VideoStreamsConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
+    virtual RequestId putVideoStreamsConfig(const VideoStreamsUpdate& update, QObject* context,
+                                           ApiCompletion<VideoStreamsConfigDto> completion)
+    {
+        Q_UNUSED(update)
+        Q_UNUSED(context)
+        ApiError error;
+        error.code = QStringLiteral("video_streams_config_unsupported");
+        error.message = QStringLiteral("设备不支持码流配置，请升级板端接口");
+        error.category = ApiErrorCategory::CapabilityDisabled;
+        if (completion) completion(ApiResult<VideoStreamsConfigDto>::failure(std::move(error)));
+        return RequestId::createUuid();
+    }
+
     virtual RequestId getTriggerModeConfig(QObject* context, ApiCompletion<TriggerModeConfigDto> completion)
     {
         Q_UNUSED(context)

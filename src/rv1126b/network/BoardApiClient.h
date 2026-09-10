@@ -36,6 +36,9 @@ public:
     void setProfile(DeviceProfile profile);
 
     RequestId getHealth(QObject* context, ApiCompletion<HealthDto> completion) override;
+    RequestId getVideoStreamsConfig(QObject* context, ApiCompletion<VideoStreamsConfigDto> completion) override;
+    RequestId putVideoStreamsConfig(const VideoStreamsUpdate& update, QObject* context,
+                                   ApiCompletion<VideoStreamsConfigDto> completion) override;
     RequestId listEvents(int limit, const std::optional<QString>& cursor, QObject* context, ApiCompletion<EventPageDto> completion) override;
     RequestId getEventDetail(const EventIdentity& identity, QObject* context, ApiCompletion<EventDetailDto> completion) override;
     RequestId downloadEvidenceToPartFile(

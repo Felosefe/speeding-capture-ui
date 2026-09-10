@@ -353,6 +353,19 @@ void DeviceIntegrationControllerTest::onlineSessionOpensSubStreamAndSupportsSwit
     QCOMPARE(player.openCount, 2);
     QCOMPARE(player.lastStream.role, RtspStreamRole::Main);
     QCOMPARE(player.lastStream.url, QUrl(QStringLiteral("rtsp://192.0.2.10/live/0")));
+    controller.restartSelectedStream(QStringLiteral("other-device"));
+    QCOMPARE(player.openCount, 2);
+    controller.restartSelectedStream(QStringLiteral("device-a"));
+    QCOMPARE(player.openCount, 3);
+    QCOMPARE(player.lastStream.role, RtspStreamRole::Main);
+    controller.setPlaybackSuspended(true);
+    controller.restartSelectedStream(QStringLiteral("device-a"));
+    QCOMPARE(player.openCount, 3);
+    controller.setPlaybackSuspended(false);
+    QCOMPARE(player.openCount, 4);
+    controller.disconnectDevice(QStringLiteral("device-a"));
+    controller.restartSelectedStream(QStringLiteral("device-a"));
+    QCOMPARE(player.openCount, 4);
 }
 
 void DeviceIntegrationControllerTest::degradedHttpDoesNotStopVideoAndRtspFailureDoesNotChangeSession()

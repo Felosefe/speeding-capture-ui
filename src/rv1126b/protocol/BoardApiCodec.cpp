@@ -708,6 +708,73 @@ ApiResult<TimeStatusDto> BoardApiCodec::parseTimeStatus(const QByteArray& payloa
     return ApiResult<TimeStatusDto>::success(std::move(status));
 }
 
+ApiResult<VideoStreamsConfigDto> BoardApiCodec::parseVideoStreamsConfig(const QByteArray& payload) const
+{
+    const auto parsed = parseObject(payload);
+    if (!parsed) return ApiResult<VideoStreamsConfigDto>::failure(parsed.error());
+    const auto& object = parsed.value();
+    VideoStreamsConfigDto config;
+    ApiError error;
+    QJsonObject main;
+    QJsonObject sub;
+    if (!requireApiVersion(object, &config.apiVersion, &error)
+        || !assign(requiredString(object, "revision"), &config.revision, &error)
+        || !assign(requiredString(object, "runtime_revision"), &config.runtimeRevision, &error)
+        || !assign(requiredBool(object, "write_enabled"), &config.writeEnabled, &error)
+        || !assign(requiredBool(object, "restart_required"), &config.restartRequired, &error)
+        || !assign(requiredObject(object, "main"), &main, &error)
+        || !assign(requiredObject(object, "sub"), &sub, &error)) {
+        return ApiResult<VideoStreamsConfigDto>::failure(error);
+    }
+    auto readStream = [&error](const QJsonObject& value, VideoStreamSettings* stream) {
+        qint64 width = 0;
+        qint64 height = 0;
+        if (!assign(requiredInteger(value, "width"), &width, &error)
+            || !assign(requiredInteger(value, "height"), &height, &error)
+            || !assign(requiredString(value, "codec"), &stream->codec, &error)) return false;
+        if (width <= 0 || width > std::numeric_limits<int>::max()
+            || height <= 0 || height > std::numeric_limits<int>::max()
+            || (stream->codec != QLatin1String("h264") && stream->codec != QLatin1String("h265"))) {
+            error = protocolError(QStringLiteral("invalid_video_streams_config"),
+                                  QStringLiteral("Invalid video stream dimensions or codec."));
+            return false;
+        }
+        // Reads accept old profiles, so the UI can migrate them to the fixed sizes.
+        stream->width = static_cast<int>(width);
+        stream->height = static_cast<int>(height);
+        return true;
+    };
+    if (!readStream(main, &config.main) || !readStream(sub, &config.sub))
+        return ApiResult<VideoStreamsConfigDto>::failure(error);
+    if (config.revision.trimmed().isEmpty() || config.runtimeRevision.trimmed().isEmpty())
+        return failure<VideoStreamsConfigDto>(QStringLiteral("invalid_video_streams_config"),
+                                             QStringLiteral("Missing video configuration revision."));
+    return ApiResult<VideoStreamsConfigDto>::success(std::move(config));
+}
+
+ApiResult<QByteArray> BoardApiCodec::encodeVideoStreamsConfig(const VideoStreamsUpdate& update) const
+{
+    auto valid = [](const VideoStreamSettings& stream, const VideoStreamSettings& target) {
+        return stream.width == target.width && stream.height == target.height
+            && (stream.codec == QLatin1String("h264") || stream.codec == QLatin1String("h265"));
+    };
+    if (update.expectedRevision.trimmed().isEmpty()
+        || !valid(update.main, mainVideoStreamDefaults()) || !valid(update.sub, subVideoStreamDefaults())) {
+        return ApiResult<QByteArray>::failure(validationError(
+            QStringLiteral("invalid_video_streams_config"),
+            QStringLiteral("主码流必须为2560×1440，辅码流必须为1920×1080，编码仅支持H.264/H.265")));
+    }
+    auto streamJson = [](const VideoStreamSettings& stream) {
+        return QJsonObject{{QStringLiteral("width"), stream.width},
+                           {QStringLiteral("height"), stream.height},
+                           {QStringLiteral("codec"), stream.codec}};
+    };
+    return ApiResult<QByteArray>::success(QJsonDocument(QJsonObject{
+        {QStringLiteral("expected_revision"), update.expectedRevision},
+        {QStringLiteral("main"), streamJson(update.main)},
+        {QStringLiteral("sub"), streamJson(update.sub)}}).toJson(QJsonDocument::Compact));
+}
+
 ApiResult<TriggerModeConfigDto> BoardApiCodec::parseTriggerModeConfig(const QByteArray& payload) const
 {
     const auto parsed = parseObject(payload);

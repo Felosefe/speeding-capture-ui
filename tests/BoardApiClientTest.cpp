@@ -3,6 +3,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
@@ -96,6 +98,13 @@ private:
             return;
         }
 
+        const auto headerEnd = buffer.indexOf("\r\n\r\n") + 4;
+        qint64 requestLength = 0;
+        for (const auto& header : buffer.left(headerEnd).split('\n')) {
+            if (header.toLower().startsWith("content-length:"))
+                requestLength = header.mid(sizeof("content-length:") - 1).trimmed().toLongLong();
+        }
+        if (buffer.size() < headerEnd + requestLength) return;
         lastRequest = buffer;
         const QByteArray statusText = response.status == 200 ? "OK" : "Error";
         QByteArray headers = QByteArrayLiteral("HTTP/1.1 ") + QByteArray::number(response.status)
@@ -144,6 +153,9 @@ class BoardApiClientTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void videoStreamsGetAndPutUseContract();
+    void videoStreamsErrors_data();
+    void videoStreamsErrors();
     void healthRequestUsesBearerAndDecodesResponse();
     void errorResponseUsesStableBoardError();
     void errorResponsesUseStableCategories_data();
@@ -385,6 +397,81 @@ void BoardApiClientTest::destroyedContextSuppressesCompletion()
     QTest::qWait(100);
 
     QCOMPARE(completionCount, 0);
+}
+
+void BoardApiClientTest::videoStreamsGetAndPutUseContract()
+{
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.body = QByteArrayLiteral(R"({"api_version":"v1","revision":"r1",
+        "runtime_revision":"runtime-r1","write_enabled":true,"restart_required":false,
+        "main":{"width":2560,"height":1440,"codec":"h265"},
+        "sub":{"width":1920,"height":1080,"codec":"h264"}})");
+    TestSecretStore secrets(QByteArrayLiteral("video-test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secrets, &codec);
+    std::optional<ApiResult<VideoStreamsConfigDto>> result;
+    client.getVideoStreamsConfig(this, [&](auto value) { result = std::move(value); });
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(*result);
+    QVERIFY(server.lastRequest.startsWith("GET /api/v1/config/video-streams HTTP/1.1\r\n"));
+    QVERIFY(server.lastRequest.toLower().contains("authorization: bearer video-test-token\r\n"));
+    VideoStreamsUpdate update;
+    update.expectedRevision = result->value().revision;
+    update.main.codec = QStringLiteral("h265");
+    result.reset();
+    client.putVideoStreamsConfig(update, this, [&](auto value) { result = std::move(value); });
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(*result);
+    QVERIFY(server.lastRequest.startsWith("PUT /api/v1/config/video-streams HTTP/1.1\r\n"));
+    QVERIFY(server.lastRequest.toLower().contains("authorization: bearer video-test-token\r\n"));
+    const auto body = QJsonDocument::fromJson(server.lastRequest.mid(server.lastRequest.indexOf("\r\n\r\n") + 4)).object();
+    QCOMPARE(body.value(QStringLiteral("expected_revision")).toString(), QStringLiteral("r1"));
+    QCOMPARE(body.value(QStringLiteral("main")).toObject().value(QStringLiteral("codec")).toString(), QStringLiteral("h265"));
+    QCOMPARE(body.value(QStringLiteral("sub")).toObject().value(QStringLiteral("width")).toInt(), 1920);
+    update.main.width = 3840;
+    result.reset();
+    server.lastRequest.clear();
+    client.putVideoStreamsConfig(update, this, [&](auto value) { result = std::move(value); });
+    QTRY_VERIFY(result.has_value());
+    QVERIFY(!*result);
+    QCOMPARE(result->error().category, ApiErrorCategory::Validation);
+    QVERIFY(server.lastRequest.isEmpty());
+}
+
+void BoardApiClientTest::videoStreamsErrors_data()
+{
+    QTest::addColumn<int>("status");
+    QTest::addColumn<QString>("code");
+    QTest::addColumn<ApiErrorCategory>("category");
+    QTest::newRow("conflict") << 409 << QStringLiteral("config_revision_conflict") << ApiErrorCategory::Conflict;
+    QTest::newRow("write-disabled") << 403 << QStringLiteral("config_write_disabled") << ApiErrorCategory::CapabilityDisabled;
+    QTest::newRow("unauthorized") << 401 << QStringLiteral("unauthorized") << ApiErrorCategory::Authentication;
+    QTest::newRow("unsupported") << 404 << QStringLiteral("video_streams_config_unsupported") << ApiErrorCategory::NotFound;
+}
+
+void BoardApiClientTest::videoStreamsErrors()
+{
+    QFETCH(int, status);
+    QFETCH(QString, code);
+    QFETCH(ApiErrorCategory, category);
+    TestHttpServer server;
+    QVERIFY(server.start());
+    server.response.status = status;
+    server.response.body = QJsonDocument(QJsonObject{{QStringLiteral("error"), QJsonObject{
+        {QStringLiteral("code"), code}, {QStringLiteral("message"), QStringLiteral("private board detail")}}}}).toJson();
+    TestSecretStore secrets(QByteArrayLiteral("video-test-token"));
+    BoardApiCodec codec;
+    BoardApiClient client(profileFor(server), &secrets, &codec);
+    VideoStreamsUpdate update;
+    update.expectedRevision = QStringLiteral("r1");
+    std::optional<ApiResult<VideoStreamsConfigDto>> result;
+    client.putVideoStreamsConfig(update, this, [&](auto value) { result = std::move(value); });
+    QTRY_VERIFY_WITH_TIMEOUT(result.has_value(), 1000);
+    QVERIFY(!*result);
+    QCOMPARE(result->error().category, category);
+    QCOMPARE(result->error().code, code);
+    QVERIFY(!result->error().message.contains(QStringLiteral("private board detail")));
 }
 
 QTEST_MAIN(BoardApiClientTest)
