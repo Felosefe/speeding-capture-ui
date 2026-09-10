@@ -2,6 +2,7 @@
 
 #include "../rv1126b/ports/IBoardApiClient.h"
 #include "../rv1126b/ports/IRtspPlayer.h"
+#include "../rv1126b/application/VideoStreamsController.h"
 
 #include <QWidget>
 
@@ -23,7 +24,7 @@ public:
     explicit LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent = nullptr);
 
     void setCurrentDevice(const QString& deviceId);
-    void setBoardApiClient(rv1126b::IBoardApiClient* boardApi);
+    void setBoardApiClient(rv1126b::IBoardApiClient* boardApi, bool videoConfigAvailable = true);
     // 用持久化的默认码流回填下拉框；不会发出 streamRoleChanged，
     // 因此调用方需要在设置后自行同步控制器（避免启动时多余的重新连接）。
     void setStreamRole(rv1126b::RtspStreamRole role);
@@ -34,11 +35,14 @@ public slots:
 
 signals:
     void streamRoleChanged(rv1126b::RtspStreamRole role);
+    void previewRestartRequested(const QString& deviceId);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void updateVideoControls();
+    void clearActualResolution();
     void loadDetectionConfig();
     void saveDetectionConfig();
     void saveLineRegionConfig(const QString& runtimeRevision, bool restartRequired);
@@ -58,6 +62,12 @@ private:
     QLabel* stateLabel_ = nullptr;
     QLabel* detectionStatus_ = nullptr;
     QComboBox* streamCombo_ = nullptr;
+    QComboBox* videoCodecCombo_ = nullptr;
+    QLabel* videoConfigStatus_ = nullptr;
+    QLabel* actualResolutionLabel_ = nullptr;
+    QPushButton* applyVideoButton_ = nullptr;
+    QPushButton* refreshVideoButton_ = nullptr;
+    rv1126b::VideoStreamsController* videoController_ = nullptr;
     QComboBox* triggerModeCombo_ = nullptr;
     QComboBox* laneDirectionCombo_ = nullptr;
     QCheckBox* showTriggerLineCheck_ = nullptr;

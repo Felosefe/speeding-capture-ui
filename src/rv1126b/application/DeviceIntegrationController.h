@@ -56,6 +56,7 @@ public:
     bool selectVideoDevice(const QString& deviceId);
     void disconnectDevice(const QString& deviceId);
     void setStreamRole(RtspStreamRole role);
+    void restartSelectedStream(const QString& deviceId);
     void setPlaybackSuspended(bool suspended);
     void shutdown();
 

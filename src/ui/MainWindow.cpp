@@ -567,6 +567,8 @@ void MainWindow::connectIntegrationController()
                                                             .arg(systemSettingsService_->lastError()));
                     }
                 });
+        connect(livePreviewPanel_, &LivePreviewPanel::previewRestartRequested,
+                integrationController_, &rv1126b::DeviceIntegrationController::restartSelectedStream);
         if (rtspPlayer_)
         {
             livePreviewPanel_->setPlaybackState(rtspPlayer_->state());
@@ -1302,7 +1304,9 @@ void MainWindow::updateVideoWidgets()
     if (livePreviewPanel_)
     {
         livePreviewPanel_->setCurrentDevice(device ? device->id : QString());
-        livePreviewPanel_->setBoardApiClient(device && boardApiForDevice_ ? boardApiForDevice_(device->id) : nullptr);
+        livePreviewPanel_->setBoardApiClient(device && boardApiForDevice_ ? boardApiForDevice_(device->id) : nullptr,
+            device && (device->status.connectionState == DeviceConnectionState::Online
+                       || device->status.connectionState == DeviceConnectionState::Degraded));
     }
     snapshotPreview_->setDevice(device);
     if (mockMode_)
@@ -2249,6 +2253,11 @@ void MainWindow::handleSessionChanged(const rv1126b::DeviceSessionSnapshot &snap
     if (row == currentDeviceRow())
     {
         updateDeviceProperties();
+        if (livePreviewPanel_ && boardApiForDevice_) {
+            livePreviewPanel_->setBoardApiClient(boardApiForDevice_(snapshot.profile.deviceId),
+                snapshot.state == rv1126b::DeviceSessionState::Online
+                || snapshot.state == rv1126b::DeviceSessionState::Degraded);
+        }
     }
     if (persistentStatusLabel_)
     {
@@ -2274,7 +2283,10 @@ void MainWindow::handleSelectedVideoDeviceChanged(const QString &deviceId)
     if (livePreviewPanel_)
     {
         livePreviewPanel_->setCurrentDevice(deviceId);
-        livePreviewPanel_->setBoardApiClient(!deviceId.isEmpty() && boardApiForDevice_ ? boardApiForDevice_(deviceId) : nullptr);
+        const Device* device = deviceModel_->deviceAt(row);
+        livePreviewPanel_->setBoardApiClient(!deviceId.isEmpty() && boardApiForDevice_ ? boardApiForDevice_(deviceId) : nullptr,
+            device && (device->status.connectionState == DeviceConnectionState::Online
+                       || device->status.connectionState == DeviceConnectionState::Degraded));
     }
     if (!mockMode_ && !deviceId.isEmpty() && currentSystemSettings_.ui.lastSelectedVideoDeviceId != deviceId)
     {

@@ -16,6 +16,8 @@ public:
     ApiResult<EventDetailDto> parseEventDetail(const QByteArray& payload) const override;
     ApiResult<EvidenceConfigDto> parseEvidenceConfig(const QByteArray& payload) const override;
     ApiResult<TimeStatusDto> parseTimeStatus(const QByteArray& payload) const override;
+    ApiResult<VideoStreamsConfigDto> parseVideoStreamsConfig(const QByteArray& payload) const override;
+    ApiResult<QByteArray> encodeVideoStreamsConfig(const VideoStreamsUpdate& update) const override;
     ApiResult<TriggerModeConfigDto> parseTriggerModeConfig(const QByteArray& payload) const override;
     ApiResult<LineRegionConfigDto> parseLineRegionConfig(const QByteArray& payload) const override;
     ApiResult<RuntimeApplyDto> parseRuntimeApply(const QByteArray& payload) const override;

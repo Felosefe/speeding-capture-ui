@@ -1,0 +1,9 @@
+{
+  "api_version": "v1",
+  "revision": "video-r1",
+  "runtime_revision": "runtime-r1",
+  "write_enabled": true,
+  "restart_required": false,
+  "main": {"width": 2560, "height": 1440, "codec": "h265"},
+  "sub": {"width": 1920, "height": 1080, "codec": "h264"}
+}
