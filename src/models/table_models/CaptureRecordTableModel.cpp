@@ -63,10 +63,10 @@ QString plateColorText(const QString& raw)
     const QString lower = value.toLower();
     if (lower == QStringLiteral("blue")) return QStringLiteral("蓝牌");
     if (lower == QStringLiteral("yellow")) return QStringLiteral("黄牌");
-    if (lower == QStringLiteral("green")) return QStringLiteral("绿牌（新能源）");
+    if (lower == QStringLiteral("green")) return QStringLiteral("绿牌");
     if (lower == QStringLiteral("yellow_green") || lower == QStringLiteral("yellowgreen")
         || lower == QStringLiteral("green_yellow")) {
-        return QStringLiteral("黄绿牌（新能源）");
+        return QStringLiteral("黄绿牌");
     }
     if (lower == QStringLiteral("white")) return QStringLiteral("白牌");
     if (lower == QStringLiteral("black")) return QStringLiteral("黑牌");
@@ -82,11 +82,11 @@ QString directionText(const QString& raw)
     const QString value = raw.trimmed();
     if (value.isEmpty()) return QStringLiteral("未知");
     const QString lower = value.toLower();
-    if (lower == QStringLiteral("down")) return QStringLiteral("下行（驶离）");
-    if (lower == QStringLiteral("up")) return QStringLiteral("上行（驶来）");
+    if (lower == QStringLiteral("down")) return QStringLiteral("下行");
+    if (lower == QStringLiteral("up")) return QStringLiteral("上行");
     if (lower == QStringLiteral("bidirectional")) return QStringLiteral("双向");
     if (lower == QStringLiteral("unknown")) return QStringLiteral("未知");
-    if (lower == QStringLiteral("approaching")) return QStringLiteral("接近（历史取值）");
+    if (lower == QStringLiteral("approaching")) return QStringLiteral("接近");
     return value;
 }
 

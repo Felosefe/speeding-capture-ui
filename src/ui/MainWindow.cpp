@@ -12,6 +12,7 @@
 #include "../video/VideoWidget.h"
 #include "DeviceConfigDialog.h"
 #include "DeviceDiscoveryDialog.h"
+#include "DeviceCardDelegate.h"
 #include "LivePreviewPanel.h"
 #include "Rv1126bDeviceManagementDialog.h"
 #include "SystemSettingsDialog.h"
@@ -322,7 +323,7 @@ void MainWindow::createCentralLayout()
     snapshotPreview_ = new VideoWidget(VideoWidget::Mode::Snapshot, this);
 
     auto *leftSplitter = new QSplitter(Qt::Vertical, this);
-    leftSplitter->addWidget(deviceTable_);
+    leftSplitter->addWidget(mockMode_ ? static_cast<QWidget *>(deviceTable_) : createDevicePanel());
     leftSplitter->addWidget(propertyTable_);
     leftSplitter->setStretchFactor(0, 3);
     leftSplitter->setStretchFactor(1, 2);
@@ -587,6 +588,12 @@ void MainWindow::populateInitialData()
 
 void MainWindow::updateStatusText()
 {
+    if (deviceCountLabel_)
+    {
+        deviceCountLabel_->setText(QStringLiteral("%1 台 · 在线 %2")
+                                       .arg(deviceModel_->deviceCount())
+                                       .arg(deviceModel_->onlineCount()));
+    }
     if (!mockMode_ && deviceModel_->deviceCount() == 0)
     {
         statusLabel_->setText(QStringLiteral("尚无已知设备 | 点击“搜索设备”进行广播发现或手工输入 IPv4"));
@@ -665,6 +672,21 @@ void MainWindow::applySystemSettings(bool initialApply)
     if (currentSystemSettings_.ui.startMaximized && initialApply)
     {
         setWindowState(windowState() | Qt::WindowMaximized);
+    }
+
+    // 界面自检：设了 DSH_UI_SNAPSHOT=<png 路径> 时，启动几秒后把整个窗口画到 PNG。
+    // 只用于开发期"改完界面看一眼"，正常使用不设这个变量就完全没影响。
+    if (initialApply)
+    {
+        const QByteArray snapshotPath = qgetenv("DSH_UI_SNAPSHOT");
+        if (!snapshotPath.isEmpty())
+        {
+            const QString path = QString::fromLocal8Bit(snapshotPath);
+            QTimer::singleShot(2500, this, [this, path]()
+                               {
+                const QPixmap pixmap = grab();
+                if (!pixmap.isNull()) pixmap.save(path, "PNG"); });
+        }
     }
 }
 
@@ -836,14 +858,23 @@ QTableView *MainWindow::createDeviceTable()
 
     if (!mockMode_)
     {
-        // 真机模式的设备行已经是一个竖排卡片（名称 / IP·状态 / 最后心跳都在第一列里），
-        // 其余横向列全部隐藏，省掉横向滚动条，也让这一栏竖着排得下更多设备。
+        // 真机模式：不做表头 + 多列的表格，改成一列卡片（见 DeviceCardDelegate）。
+        // 其余横向列全部隐藏，靠卡片自己排版，不再需要横向滚动条，也没有表头挤字。
         for (int column = DeviceTableModel::IpColumn; column < DeviceTableModel::ColumnCount; ++column)
         {
             table->setColumnHidden(column, true);
         }
-        table->setWordWrap(true);
+        table->horizontalHeader()->setVisible(false);
+        table->setAlternatingRowColors(false);
+        table->setShowGrid(false);
+        table->setWordWrap(false);
+        table->setItemDelegate(new DeviceCardDelegate(deviceModel_, table));
+        table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        // 行高交给代理的 sizeHint（按真实字体算），不要写死像素值。
         table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        table->setStyleSheet(QStringLiteral(
+            "QTableView { background: #f6f8fa; border: none; }"
+            "QTableView::item { border: none; }"));
         if (QHeaderView *header = table->horizontalHeader())
         {
             header->setSectionResizeMode(DeviceTableModel::NameColumn, QHeaderView::Stretch);
@@ -860,6 +891,36 @@ QTableView *MainWindow::createDeviceTable()
     connect(table, &QTableView::customContextMenuRequested, this, &MainWindow::showDeviceContextMenu);
 
     return table;
+}
+
+QWidget *MainWindow::createDevicePanel()
+{
+    // 左栏顶部一行小标题，代替原来那个挤在 200px 宽里、还带排序箭头的表头。
+    auto *panel = new QWidget(this);
+    auto *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto *header = new QWidget(panel);
+    header->setObjectName(QStringLiteral("devicePanelHeader"));
+    header->setFixedHeight(30);
+    header->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    header->setStyleSheet(QStringLiteral(
+        "#devicePanelHeader { background: #eef2f6; border-bottom: 1px solid #d8dee5; }"));
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(12, 0, 10, 0);
+    auto *title = new QLabel(QStringLiteral("设备"), header);
+    title->setStyleSheet(QStringLiteral("font-weight: 600; color: #202429; background: transparent;"));
+    deviceCountLabel_ = new QLabel(header);
+    deviceCountLabel_->setObjectName(QStringLiteral("deviceCountLabel"));
+    deviceCountLabel_->setStyleSheet(QStringLiteral("color: #6b7280; background: transparent;"));
+    headerLayout->addWidget(title);
+    headerLayout->addStretch(1);
+    headerLayout->addWidget(deviceCountLabel_);
+    layout->addWidget(header, 0);
+
+    layout->addWidget(deviceTable_, 1);
+    return panel;
 }
 
 QTableView *MainWindow::createPropertyTable()

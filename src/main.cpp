@@ -13,6 +13,8 @@ int main(int argc, char* argv[])
 {
     qputenv("QT_MEDIA_BACKEND", "ffmpeg");
     if (qgetenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES").isEmpty()) {
+        // 注意是 dxva2，不是 dx2va（后者 Qt/FFmpeg 都不认识，会被静默忽略，
+        // 等于只剩 d3d11va 一个后端）。见 doc/实时视频性能评估 20260928.md。
         qputenv("QT_FFMPEG_DECODING_HW_DEVICE_TYPES", "d3d11va,dxva2");
     }
     QApplication app(argc, argv);

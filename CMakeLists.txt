@@ -116,6 +116,8 @@ qt_add_executable(CameraManagerApp
     src/services/SystemSettingsService.h
     src/ui/DeviceConfigDialog.cpp
     src/ui/DeviceConfigDialog.h
+    src/ui/DeviceCardDelegate.cpp
+    src/ui/DeviceCardDelegate.h
     src/ui/DeviceDiscoveryDialog.cpp
     src/ui/DeviceDiscoveryDialog.h
     src/ui/LivePreviewPanel.cpp

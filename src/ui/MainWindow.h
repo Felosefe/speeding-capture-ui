@@ -144,6 +144,8 @@ private:
     int currentCaptureRow() const;
 
     QTableView* createDeviceTable();
+    // 真机模式的左栏：标题行 + 卡片式设备列表（替掉挤字的表头表格）。
+    QWidget* createDevicePanel();
     QTableView* createPropertyTable();
     // 左下角属性表要显示的板端「展示配置」（点位名称/道路方向/限速）。
     // 真机模式下本机 DeviceConfig 没有任何写入者，板端才是唯一真源。
@@ -204,6 +206,7 @@ private:
     VideoWidget* snapshotPreview_ = nullptr;
     QSplitter* previewSplitter_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QLabel* deviceCountLabel_ = nullptr;
     QLabel* persistentStatusLabel_ = nullptr;
     QTimer* capturePauseTimer_ = nullptr;
     QMenu* deviceContextMenu_ = nullptr;
