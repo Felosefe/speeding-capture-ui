@@ -21,12 +21,24 @@ class DeviceCardDelegate final : public QStyledItemDelegate
     Q_OBJECT
 
 public:
-    explicit DeviceCardDelegate(const DeviceTableModel* model, QObject* parent = nullptr);
+    enum class Mode {
+        Device,    // 左栏设备卡片：两行（设备名+状态 / IP·心跳）
+        Property,  // 左下角属性行：一行「名称 ……… 值」，无表头
+    };
+
+    explicit DeviceCardDelegate(const DeviceTableModel* model, Mode mode = Mode::Device,
+                                QObject* parent = nullptr);
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
 
 private:
+    void paintDeviceCard(QPainter* painter, const QStyleOptionViewItem& option,
+                         const QModelIndex& index) const;
+    void paintPropertyRow(QPainter* painter, const QStyleOptionViewItem& option,
+                          const QModelIndex& index) const;
+
     const DeviceTableModel* model_ = nullptr;
+    Mode mode_ = Mode::Device;
 };

@@ -324,7 +324,7 @@ void MainWindow::createCentralLayout()
 
     auto *leftSplitter = new QSplitter(Qt::Vertical, this);
     leftSplitter->addWidget(mockMode_ ? static_cast<QWidget *>(deviceTable_) : createDevicePanel());
-    leftSplitter->addWidget(propertyTable_);
+    leftSplitter->addWidget(mockMode_ ? static_cast<QWidget *>(propertyTable_) : createPropertyPanel());
     leftSplitter->setStretchFactor(0, 3);
     leftSplitter->setStretchFactor(1, 2);
 
@@ -868,7 +868,7 @@ QTableView *MainWindow::createDeviceTable()
         table->setAlternatingRowColors(false);
         table->setShowGrid(false);
         table->setWordWrap(false);
-        table->setItemDelegate(new DeviceCardDelegate(deviceModel_, table));
+        table->setItemDelegate(new DeviceCardDelegate(deviceModel_, DeviceCardDelegate::Mode::Device, table));
         table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
         // 行高交给代理的 sizeHint（按真实字体算），不要写死像素值。
         table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -929,7 +929,55 @@ QTableView *MainWindow::createPropertyTable()
     table->setModel(propertyModel_);
     configureTableView(table);
     table->setSelectionMode(QAbstractItemView::NoSelection);
+
+    if (!mockMode_)
+    {
+        // 和左栏一样：不要表头、不要网格，改成一行一条「名称 ……… 值」。
+        table->horizontalHeader()->setVisible(false);
+        table->setAlternatingRowColors(false);
+        table->setShowGrid(false);
+        table->setWordWrap(false);
+        table->setItemDelegate(new DeviceCardDelegate(nullptr, DeviceCardDelegate::Mode::Property, table));
+        table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+        table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        for (int column = 0; column < propertyModel_->columnCount(); ++column)
+        {
+            table->horizontalHeader()->setSectionResizeMode(column, QHeaderView::Stretch);
+        }
+        table->setStyleSheet(QStringLiteral(
+            "QTableView { background: #f6f8fa; border: none; }"
+            "QTableView::item { border: none; }"));
+    }
     return table;
+}
+
+QWidget *MainWindow::createPropertyPanel()
+{
+    auto *panel = new QWidget(this);
+    auto *layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    auto *header = new QWidget(panel);
+    header->setObjectName(QStringLiteral("propertyPanelHeader"));
+    header->setFixedHeight(30);
+    header->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    header->setStyleSheet(QStringLiteral(
+        "#propertyPanelHeader { background: #eef2f6; border-bottom: 1px solid #d8dee5; }"));
+    auto *headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(12, 0, 10, 0);
+    auto *title = new QLabel(QStringLiteral("设备信息"), header);
+    title->setStyleSheet(QStringLiteral("font-weight: 600; color: #202429; background: transparent;"));
+    // 点位信息来自板端，这里只有一句话说明去哪儿看，不再每行都挂一长串提示。
+    auto *hint = new QLabel(QStringLiteral("点位信息见「设备配置 › 展示配置」"), header);
+    hint->setStyleSheet(QStringLiteral("color: #8a9199; background: transparent;"));
+    headerLayout->addWidget(title);
+    headerLayout->addStretch(1);
+    headerLayout->addWidget(hint);
+    layout->addWidget(header, 0);
+
+    layout->addWidget(propertyTable_, 1);
+    return panel;
 }
 
 QWidget *MainWindow::createCaptureRecordPanel()

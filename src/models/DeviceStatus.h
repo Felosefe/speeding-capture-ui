@@ -29,7 +29,7 @@ inline QString connectionStateText(DeviceConnectionState state)
     case DeviceConnectionState::Online:
         return QStringLiteral("在线");
     case DeviceConnectionState::Degraded:
-        return QStringLiteral("退化");
+        return QStringLiteral("连接不稳定");
     case DeviceConnectionState::AuthenticationFailed:
         return QStringLiteral("认证失败");
     case DeviceConnectionState::Disconnecting:

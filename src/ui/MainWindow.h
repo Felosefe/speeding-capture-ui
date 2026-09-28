@@ -146,6 +146,8 @@ private:
     QTableView* createDeviceTable();
     // 真机模式的左栏：标题行 + 卡片式设备列表（替掉挤字的表头表格）。
     QWidget* createDevicePanel();
+    // 左下角：标题行 + 「名称 值」属性行（不显示表头，也不再堆十几行）。
+    QWidget* createPropertyPanel();
     QTableView* createPropertyTable();
     // 左下角属性表要显示的板端「展示配置」（点位名称/道路方向/限速）。
     // 真机模式下本机 DeviceConfig 没有任何写入者，板端才是唯一真源。

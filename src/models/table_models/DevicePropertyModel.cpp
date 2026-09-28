@@ -2,9 +2,10 @@
 
 namespace {
 
-// 板端"展示配置"尚未读到时的统一提示：告诉用户去哪里看真实值，
-// 而不是把本机结构体里的陈旧默认值当成现场配置显示出来。
-const QString kSiteInfoNotLoaded = QStringLiteral("未读取（打开「设备配置 › 展示配置」）");
+// 板端"展示配置"尚未读到时的统一提示。以前这里挂着一长串
+// "未读取（打开「设备配置 › 展示配置」）"，一屏里出现三遍很吵；
+// 具体去哪里看由面板标题一次说清（见 MainWindow::createPropertyPanel）。
+const QString kSiteInfoNotLoaded = QStringLiteral("未读取");
 
 QString displayOrFallback(const QString& value)
 {
@@ -80,34 +81,25 @@ void DevicePropertyModel::rebuildProperties()
     }
 
     properties_ = {
-        {QStringLiteral("设备 ID"), device_->id},
-        {QStringLiteral("设备名称"), device_->name},
+        // 只留现场真正会看的几项。设备 ID / 型号 / 端口 / API URL / 能力声明这些
+        // 要么左栏卡片已经有了，要么属于排查时才看的东西，不再往这一小格里堆。
         {QStringLiteral("设备状态"), connectionStateText(device_->status.connectionState)},
-        {QStringLiteral("运行状态"), device_->status.runningState},
-        {QStringLiteral("IP 地址"), device_->ipAddress},
-        {QStringLiteral("端口"), QString::number(device_->port)},
-        {QStringLiteral("API URL"), device_->apiUrl.isEmpty() ? QStringLiteral("-") : device_->apiUrl},
-        {QStringLiteral("能力声明"), device_->capabilities.isEmpty() ? QStringLiteral("未声明（不隐藏功能）")
-                                                                    : device_->capabilities.join(QStringLiteral(", "))},
-        // 以下四项来自板端「展示配置」（GET /api/v1/config/evidence），与配置界面同源。
+        {QStringLiteral("IP 地址"), device_->ipAddress.isEmpty() ? QStringLiteral("未获取") : device_->ipAddress},
+        {QStringLiteral("最后心跳"), device_->status.lastHeartbeat.isValid()
+             ? device_->status.lastHeartbeat.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+             : QStringLiteral("—")},
         {QStringLiteral("点位名称"), displayOrFallback(boardSiteName_)},
         {QStringLiteral("道路方向"), displayOrFallback(boardRoadDirection_)},
         {QStringLiteral("限速值"), speedLimitText},
-        {QStringLiteral("固件版本"), device_->status.firmwareVersion},
-        {QStringLiteral("最后心跳"), device_->status.lastHeartbeat.isValid()
-             ? device_->status.lastHeartbeat.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
-             : QStringLiteral("-")},
-        {QStringLiteral("最后在线"), device_->lastOnline.isValid()
-             ? device_->lastOnline.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
-             : QStringLiteral("-")},
-        {QStringLiteral("最后错误"), device_->lastError.isEmpty() ? QStringLiteral("-") : device_->lastError},
     };
 
-    // 本地抓拍记录只在模拟模式存在；真机模式下"抓拍次数/最后抓拍"没有数据来源，
-    // 以前会一直显示 "0" 和 "-" 冒充真实统计，这里直接不显示这两行。
     if (latestRecord_) {
         properties_.append({QStringLiteral("最后抓拍"),
                             latestRecord_->timestamp.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))});
+    }
+    // 出错时单独补一行，正常时不占位置。
+    if (!device_->lastError.isEmpty()) {
+        properties_.append({QStringLiteral("最后错误"), device_->lastError});
     }
     endResetModel();
 }
@@ -117,11 +109,7 @@ void DevicePropertyModel::clear()
     beginResetModel();
     properties_ = {
         {QStringLiteral("设备状态"), QStringLiteral("未选择")},
-        {QStringLiteral("IP 地址"), QStringLiteral("-")},
-        {QStringLiteral("端口"), QStringLiteral("-")},
-        {QStringLiteral("点位名称"), QStringLiteral("-")},
-        {QStringLiteral("道路方向"), QStringLiteral("-")},
-        {QStringLiteral("限速值"), QStringLiteral("-")},
+        {QStringLiteral("IP 地址"), QStringLiteral("—")},
     };
     endResetModel();
 }

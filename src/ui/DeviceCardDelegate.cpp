@@ -38,22 +38,75 @@ QColor stateColor(DeviceConnectionState state)
 
 } // namespace
 
-DeviceCardDelegate::DeviceCardDelegate(const DeviceTableModel* model, QObject* parent)
+DeviceCardDelegate::DeviceCardDelegate(const DeviceTableModel* model, Mode mode, QObject* parent)
     : QStyledItemDelegate(parent)
     , model_(model)
+    , mode_(mode)
 {
 }
 
 QSize DeviceCardDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex&) const
 {
+    const QFontMetrics metrics(option.font);
+    if (mode_ == Mode::Property) {
+        return QSize(140, metrics.height() + 12);
+    }
     // 用真实字体算高度，不要写死数字：字体或缩放一变，写死的行高就会让卡片里的
     // 两行文字溢出到相邻行上（第一版 54px 就是这个毛病）。
-    const QFontMetrics metrics(option.font);
     return QSize(180, metrics.height() * 2 + 26);
 }
 
 void DeviceCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                                const QModelIndex& index) const
+{
+    if (mode_ == Mode::Property) {
+        paintPropertyRow(painter, option, index);
+        return;
+    }
+    paintDeviceCard(painter, option, index);
+}
+
+void DeviceCardDelegate::paintPropertyRow(QPainter* painter, const QStyleOptionViewItem& option,
+                                          const QModelIndex& index) const
+{
+    // 属性表是两列（名称 / 值），但这里要把整行当一行画。视图会为每个单元格各调一次
+    // paint，所以只在第一列真正绘制，否则整行会被画两遍（第一版就是这个毛病）。
+    if (index.column() != 0) {
+        return;
+    }
+    const QString name = index.sibling(index.row(), 0).data(Qt::DisplayRole).toString();
+    const QString value = index.sibling(index.row(), 1).data(Qt::DisplayRole).toString();
+    if (name.isEmpty() && value.isEmpty()) {
+        return;
+    }
+
+    // 行宽取整张表的宽度（不是单个单元格），这样"值"能画到右边、能长一点。
+    const int rowWidth = option.widget ? option.widget->width() : option.rect.width() * 2;
+
+    painter->save();
+    const QRect row(0, option.rect.top(), rowWidth, option.rect.height());
+    const QFontMetrics metrics(option.font);
+    const int labelWidth = qBound(70, row.width() / 3, 130);
+
+    painter->setPen(QColor(0x6b, 0x72, 0x80));
+    painter->drawText(QRect(row.left() + 12, row.top(), labelWidth, row.height()),
+                      Qt::AlignLeft | Qt::AlignVCenter,
+                      metrics.elidedText(name, Qt::ElideRight, labelWidth - 6));
+
+    painter->setPen(QColor(0x20, 0x24, 0x29));
+    const int valueLeft = row.left() + 12 + labelWidth + 8;
+    const int valueWidth = qMax(20, row.right() - 10 - valueLeft);
+    painter->drawText(QRect(valueLeft, row.top(), valueWidth, row.height()),
+                      Qt::AlignLeft | Qt::AlignVCenter,
+                      metrics.elidedText(value, Qt::ElideMiddle, valueWidth));
+
+    painter->setPen(QColor(0xf0, 0xf2, 0xf5));
+    painter->drawLine(row.left() + 10, row.bottom() - 1, row.right() - 10, row.bottom() - 1);
+    painter->restore();
+}
+
+void DeviceCardDelegate::paintDeviceCard(QPainter* painter, const QStyleOptionViewItem& option,
+                                         const QModelIndex& index) const
 {
     if (!model_) {
         QStyledItemDelegate::paint(painter, option, index);
