@@ -73,7 +73,10 @@ struct MaintenanceSettings {    bool startWithSystem = false;
 // 目标文件夹独立于证据缓存目录：缓存目录是软件内部用的，这个是给用户直接翻的。
 struct DetectionSyncSettings {
     bool enabled = true;
-    QString folder;  // 空 = 用默认目录（见 SystemSettings::defaults）
+    // 空表示"跟着存储根目录走"（<存储根目录>/检测结果）。
+    // 注意必须留空：SystemSettingsService::normalized() 在读完 storage.rootPath 之后才
+    // 把空值解析成具体路径。若在这里就填上默认路径，用户改了存储根目录后不会跟着走。
+    QString folder;
     bool includeSnapshot = false;
 };
 
@@ -85,9 +88,7 @@ struct SystemSettings {
 
     static SystemSettings defaults()
     {
-        SystemSettings settings;
-        settings.detectionSync.folder = defaultDetectionFolder(settings.storage.rootPath);
-        return settings;
+        return {};
     }
 
     // 默认目录：存储根目录下的「检测结果」子目录。
