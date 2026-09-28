@@ -1,0 +1,23 @@
+.vs/
+build/
+rtsp-spike-results/
+out/
+.qtcreator/
+.vs/
+data/
+*.user
+*.autosave
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+
+# Local portable packages and test outputs
+dist/
+rtsp_sub_*.csv
+ui_test_out.txt
+ui_test_err.txt
+api_test_out.txt
+api_test_err.txt
+device_ops_ui_test.txt

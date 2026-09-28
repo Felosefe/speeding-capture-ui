@@ -1,0 +1,7 @@
+0000000000000000000000000000000000000000 e26a6b04c8bb589d4a5080cfd7e98f11fe2f949f Phaeton <1220463251@qq.com> 1784703192 +0800	clone: from https://gitee.com/rod-detection/speeding-capture-ui.git
+e26a6b04c8bb589d4a5080cfd7e98f11fe2f949f 9ef535542b639d00f5fb9ab6fe4060d2a74c7b9d Phaeton <1220463251@qq.com> 1784704236 +0800	checkout: moving from master to dev/rtsp
+9ef535542b639d00f5fb9ab6fe4060d2a74c7b9d dd04d19046a357073f496f6f8b9fc8d33d497794 Phaeton <1220463251@qq.com> 1784792475 +0800	commit: feat: integrate rv1126b configuration and ftp workflows
+dd04d19046a357073f496f6f8b9fc8d33d497794 4511766a5c3a8d679149d4c699c01bbdb2335d0b Phaeton <1220463251@qq.com> 1784869916 +0800	commit: improve rv1126b rtsp preview latency and overlay
+4511766a5c3a8d679149d4c699c01bbdb2335d0b a6da8432e2a5d057bbba117a6fa2f3fe998e23a3 Phaeton <1220463251@qq.com> 1784872405 +0800	commit: fix rv1126b transient runtime error reporting
+a6da8432e2a5d057bbba117a6fa2f3fe998e23a3 dd79cf6ff3adc7707e1dbd9880d4f95e43a22000 Phaeton <1220463251@qq.com> 1785823288 +0800	commit: feat: add HTTP event sync, evidence cache and device operations
+dd79cf6ff3adc7707e1dbd9880d4f95e43a22000 f9bb0c3da92f16fee1dbe123d7d0deb2fde60f12 Phaeton <1220463251@qq.com> 1788962215 +0800	commit: feat: add local event time-range filter (recent 1/2/7 days or all) to capture list

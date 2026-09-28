@@ -1,0 +1,31 @@
+{
+  "api_version": "v1",
+  "items": [
+    {
+      "event_id": 131,
+      "track_id": 1994,
+      "event_time": {
+        "epoch_ms": 1784002847389,
+        "source_epoch_ms": 1784031647389,
+        "offset_applied_ms": -28800000,
+        "quality": "configured_offset"
+      },
+      "motion_direction": "northbound",
+      "speed_kmh": 62,
+      "speed_valid": true,
+      "speed_status": "valid",
+      "ocr_status": "future_ocr_state",
+      "plate_text": "ABC123",
+      "plate_ascii": "ABC123",
+      "plate_color": "blue",
+      "evidence_status": "available",
+      "evidence_available": true,
+      "detail_relative_url": "/api/v1/events/131/1994",
+      "evidence_relative_url": "/api/v1/events/131/1994/images/evidence",
+      "future_extension": true
+    }
+  ],
+  "count": 1,
+  "has_more": false,
+  "next_cursor": null
+}
