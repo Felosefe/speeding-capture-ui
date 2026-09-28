@@ -28,9 +28,11 @@ private:
     SystemSettings normalized(SystemSettings settings) const;
     void readUiSettings(QSettings& store, UiSettings& settings) const;
     void readStorageSettings(QSettings& store, StorageSettings& settings) const;
+    void readDetectionSyncSettings(QSettings& store, DetectionSyncSettings& settings) const;
     void readMaintenanceSettings(QSettings& store, MaintenanceSettings& settings) const;
     void writeUiSettings(QSettings& store, const UiSettings& settings) const;
     void writeStorageSettings(QSettings& store, const StorageSettings& settings) const;
+    void writeDetectionSyncSettings(QSettings& store, const DetectionSyncSettings& settings) const;
     void writeMaintenanceSettings(QSettings& store, const MaintenanceSettings& settings) const;
     void setLastError(const QString& message) const;
 

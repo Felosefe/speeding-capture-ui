@@ -195,6 +195,39 @@ QWidget* SystemSettingsDialog::createStoragePage()
     form->addRow(QString(), autoRecordCheck_);
     form->addRow(QString(), vehiclePassRecordCheck_);
     form->addRow(QStringLiteral("单段录像最大容量"), maxVideoSegmentSpin_);
+
+    // ── 检测结果自动保存到文件夹（用户第 4 项需求）────────────────────────────
+    // 只留三个控件：开关、目标文件夹、"浏览"。其余参数不暴露给现场。
+    auto* syncSeparator = new QLabel(QStringLiteral("检测结果自动保存"), page);
+    syncSeparator->setStyleSheet(QStringLiteral("font-weight: bold; margin-top: 10px;"));
+    form->addRow(QString(), syncSeparator);
+    auto* syncHint = new QLabel(
+        QStringLiteral("开启后，相机识别到的每一条结果都会自动写进下面的文件夹：\n"
+                       "证据图 + 车牌/速度摘要 + records.csv 总表，按「设备/日期/事件」分目录，"
+                       "直接用资源管理器就能看。文件夹不存在会自动新建。"),
+        page);
+    syncHint->setWordWrap(true);
+    syncHint->setStyleSheet(QStringLiteral("color: #5f6368;"));
+    form->addRow(QString(), syncHint);
+
+    detectionSyncCheck_ = checkBox(QStringLiteral("自动把新检测结果保存到文件夹"), true);
+    form->addRow(QString(), detectionSyncCheck_);
+
+    detectionFolderEdit_ = lineEdit();
+    auto* detectionRow = new QWidget(page);
+    auto* detectionLayout = new QHBoxLayout(detectionRow);
+    detectionLayout->setContentsMargins(0, 0, 0, 0);
+    auto* detectionBrowse = new QPushButton(QStringLiteral("浏览"), detectionRow);
+    detectionLayout->addWidget(detectionFolderEdit_, 1);
+    detectionLayout->addWidget(detectionBrowse);
+    connect(detectionBrowse, &QPushButton::clicked, this, [this]() {
+        const QString path = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择检测结果文件夹"), detectionFolderEdit_->text());
+        if (!path.isEmpty()) {
+            detectionFolderEdit_->setText(path);
+        }
+    });
+    form->addRow(QStringLiteral("检测结果文件夹"), detectionRow);
     return scrollPage(page);
 }
 
@@ -275,6 +308,9 @@ void SystemSettingsDialog::loadFromSettings()
     vehiclePassRecordCheck_->setChecked(settings_.storage.vehiclePassRecord);
     maxVideoSegmentSpin_->setValue(settings_.storage.maxVideoSegmentMb);
 
+    detectionSyncCheck_->setChecked(settings_.detectionSync.enabled);
+    detectionFolderEdit_->setText(settings_.detectionFolder());
+
     startWithSystemCheck_->setChecked(settings_.maintenance.startWithSystem);
     dailySyncCheck_->setChecked(settings_.maintenance.enableDailyDeviceTimeSync);
     dailySyncTimeEdit_->setTime(settings_.maintenance.dailySyncTime);
@@ -325,6 +361,9 @@ void SystemSettingsDialog::applyToSettings()
     settings_.storage.autoRecord = autoRecordCheck_->isChecked();
     settings_.storage.vehiclePassRecord = vehiclePassRecordCheck_->isChecked();
     settings_.storage.maxVideoSegmentMb = maxVideoSegmentSpin_->value();
+
+    settings_.detectionSync.enabled = detectionSyncCheck_->isChecked();
+    settings_.detectionSync.folder = detectionFolderEdit_->text().trimmed();
 
     settings_.maintenance.startWithSystem = startWithSystemCheck_->isChecked();
     settings_.maintenance.enableDailyDeviceTimeSync = dailySyncCheck_->isChecked();

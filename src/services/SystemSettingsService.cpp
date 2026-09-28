@@ -34,6 +34,7 @@ SystemSettings SystemSettingsService::load()
 
     readUiSettings(store, loaded.ui);
     readStorageSettings(store, loaded.storage);
+    readDetectionSyncSettings(store, loaded.detectionSync);
     readMaintenanceSettings(store, loaded.maintenance);
 
     settings_ = normalized(loaded);
@@ -48,6 +49,7 @@ bool SystemSettingsService::save(const SystemSettings& settings)
     QSettings store(settingsPath_, QSettings::IniFormat);
     writeUiSettings(store, settings_.ui);
     writeStorageSettings(store, settings_.storage);
+    writeDetectionSyncSettings(store, settings_.detectionSync);
     writeMaintenanceSettings(store, settings_.maintenance);
     store.sync();
 
@@ -106,8 +108,7 @@ SystemSettings SystemSettingsService::normalized(SystemSettings settings) const
         settings.storage.rootPath = SystemSettings::defaults().storage.rootPath;
     }
 
-    settings.maintenance.expireCaptureDays = qBound(1, settings.maintenance.expireCaptureDays, 3650);
-    settings.maintenance.expireVideoDays = qBound(1, settings.maintenance.expireVideoDays, 3650);
+    settings.maintenance.expireCaptureDays = qBound(1, settings.maintenance.expireCaptureDays, 3650);    settings.maintenance.expireVideoDays = qBound(1, settings.maintenance.expireVideoDays, 3650);
     settings.maintenance.minFreeSpaceGb = qBound(1, settings.maintenance.minFreeSpaceGb, 1024);
 
     return settings;
@@ -156,6 +157,15 @@ void SystemSettingsService::readStorageSettings(QSettings& store, StorageSetting
     settings.autoRecord = store.value(QStringLiteral("autoRecord"), settings.autoRecord).toBool();
     settings.vehiclePassRecord = store.value(QStringLiteral("vehiclePassRecord"), settings.vehiclePassRecord).toBool();
     settings.maxVideoSegmentMb = store.value(QStringLiteral("maxVideoSegmentMb"), settings.maxVideoSegmentMb).toInt();
+    store.endGroup();
+}
+
+void SystemSettingsService::readDetectionSyncSettings(QSettings& store, DetectionSyncSettings& settings) const
+{
+    store.beginGroup(QStringLiteral("detectionSync"));
+    settings.enabled = store.value(QStringLiteral("enabled"), settings.enabled).toBool();
+    settings.folder = store.value(QStringLiteral("folder"), settings.folder).toString();
+    settings.includeSnapshot = store.value(QStringLiteral("includeSnapshot"), settings.includeSnapshot).toBool();
     store.endGroup();
 }
 
@@ -216,6 +226,15 @@ void SystemSettingsService::writeStorageSettings(QSettings& store, const Storage
     store.setValue(QStringLiteral("autoRecord"), settings.autoRecord);
     store.setValue(QStringLiteral("vehiclePassRecord"), settings.vehiclePassRecord);
     store.setValue(QStringLiteral("maxVideoSegmentMb"), settings.maxVideoSegmentMb);
+    store.endGroup();
+}
+
+void SystemSettingsService::writeDetectionSyncSettings(QSettings& store, const DetectionSyncSettings& settings) const
+{
+    store.beginGroup(QStringLiteral("detectionSync"));
+    store.setValue(QStringLiteral("enabled"), settings.enabled);
+    store.setValue(QStringLiteral("folder"), settings.folder);
+    store.setValue(QStringLiteral("includeSnapshot"), settings.includeSnapshot);
     store.endGroup();
 }
 

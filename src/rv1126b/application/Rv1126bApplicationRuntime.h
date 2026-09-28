@@ -16,6 +16,7 @@ class BoardEvidenceCache;
 class EmbeddedFtpReceiveServer;
 class EvidenceCacheMaintenanceService;
 class DirectDeviceProbeService;
+class DetectionResultWriter;
 class QtMultimediaRtspPlayer;
 class SqliteEventRepository;
 class UdpDeviceDiscoveryService;
@@ -38,6 +39,7 @@ public:
     BoardDeviceFleetService* fleet() const;
     SqliteEventRepository* repository() const;
     BoardEvidenceCache* evidenceCache() const;
+    DetectionResultWriter* detectionWriter() const;
     EvidenceCacheMaintenanceService* evidenceMaintenance() const;
     QtMultimediaRtspPlayer* player() const;
     QString evidenceRootPath() const;
@@ -54,6 +56,7 @@ private:
     SqliteEventRepository* repository_ = nullptr;
     BoardDeviceFleetService* fleet_ = nullptr;
     BoardEvidenceCache* evidenceCache_ = nullptr;
+    DetectionResultWriter* detectionWriter_ = nullptr;
     EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
     EvidenceCacheMaintenanceService* evidenceMaintenance_ = nullptr;
     QtMultimediaRtspPlayer* player_ = nullptr;

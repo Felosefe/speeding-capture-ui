@@ -57,8 +57,7 @@ struct StorageSettings {
     int maxVideoSegmentMb = 512;
 };
 
-struct MaintenanceSettings {
-    bool startWithSystem = false;
+struct MaintenanceSettings {    bool startWithSystem = false;
     bool enableDailyDeviceTimeSync = false;
     QTime dailySyncTime = QTime(3, 0);
     bool enableScheduledShutdown = false;
@@ -70,13 +69,41 @@ struct MaintenanceSettings {
     bool deleteOldestWhenLowSpace = true;
 };
 
+// 「检测结果自动保存到文件夹」设置（用户第 4 项需求）。
+// 目标文件夹独立于证据缓存目录：缓存目录是软件内部用的，这个是给用户直接翻的。
+struct DetectionSyncSettings {
+    bool enabled = true;
+    QString folder;  // 空 = 用默认目录（见 SystemSettings::defaults）
+    bool includeSnapshot = false;
+};
+
 struct SystemSettings {
     UiSettings ui;
     StorageSettings storage;
+    DetectionSyncSettings detectionSync;
     MaintenanceSettings maintenance;
 
     static SystemSettings defaults()
     {
-        return {};
+        SystemSettings settings;
+        settings.detectionSync.folder = defaultDetectionFolder(settings.storage.rootPath);
+        return settings;
+    }
+
+    // 默认目录：存储根目录下的「检测结果」子目录。
+    static QString defaultDetectionFolder(const QString& storageRootPath)
+    {
+        const QString root = storageRootPath.trimmed().isEmpty()
+                                 ? QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
+                                       .filePath(QStringLiteral("captures"))
+                                 : storageRootPath;
+        return QDir(root).filePath(QStringLiteral("检测结果"));
+    }
+
+    QString detectionFolder() const
+    {
+        return detectionSync.folder.trimmed().isEmpty()
+                   ? defaultDetectionFolder(storage.rootPath)
+                   : detectionSync.folder;
     }
 };

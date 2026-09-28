@@ -388,6 +388,54 @@ RequestId SqliteEventRepository::loadEvent(
         ApiResult<std::optional<VehicleEvent>>::success(std::move(event)));
 }
 
+RequestId SqliteEventRepository::loadDetail(
+    const EventIdentity& identity,
+    QObject* context,
+    ApiCompletion<std::optional<EventDetailSnapshot>> completion)
+{
+    QString errorMessage;
+    if (!openDatabase(&errorMessage)) {
+        return finish<std::optional<EventDetailSnapshot>>(
+            context,
+            std::move(completion),
+            ApiResult<std::optional<EventDetailSnapshot>>::failure(storageError(errorMessage)));
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(QStringLiteral(
+        "SELECT device_id, event_id, track_id, trigger_mode, capture_reason, vehicle_json, "
+        "line_region_json, radar_json, ocr_json, images_json, raw_json, fetched_epoch_ms "
+        "FROM rv_event_details WHERE %1").arg(identityWhereClause()));
+    bindIdentity(query, identity);
+
+    if (!query.exec()) {
+        return finish<std::optional<EventDetailSnapshot>>(
+            context,
+            std::move(completion),
+            ApiResult<std::optional<EventDetailSnapshot>>::failure(storageError(sqlErrorText(query))));
+    }
+
+    std::optional<EventDetailSnapshot> detail;
+    if (query.next()) {
+        EventDetailSnapshot snapshot;
+        snapshot.identity = eventFromQuery(query).identity;
+        snapshot.triggerMode = query.value(3).toString();
+        snapshot.captureReason = query.value(4).toString();
+        snapshot.vehicle = objectFromJson(query.value(5).toString());
+        snapshot.lineRegion = objectFromJson(query.value(6).toString());
+        snapshot.radar = objectFromJson(query.value(7).toString());
+        snapshot.ocr = objectFromJson(query.value(8).toString());
+        snapshot.images = objectFromJson(query.value(9).toString());
+        snapshot.rawJson = objectFromJson(query.value(10).toString());
+        snapshot.fetchedEpochMs = query.value(11).toLongLong();
+        detail = std::move(snapshot);
+    }
+    return finish<std::optional<EventDetailSnapshot>>(
+        context,
+        std::move(completion),
+        ApiResult<std::optional<EventDetailSnapshot>>::success(std::move(detail)));
+}
+
 RequestId SqliteEventRepository::deleteEvent(
     const EventIdentity& identity,
     QObject* context,

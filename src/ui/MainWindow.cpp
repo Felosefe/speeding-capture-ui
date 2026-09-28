@@ -7,6 +7,7 @@
 #include "../services/DeviceManager.h"
 #include "../services/MaintenanceController.h"
 #include "../services/SystemSettingsService.h"
+#include "../rv1126b/services/DetectionResultWriter.h"
 #include "../rv1126b/services/EvidenceCacheMaintenanceService.h"
 #include "../video/VideoWidget.h"
 #include "DeviceConfigDialog.h"
@@ -110,7 +111,7 @@ MainWindow::MainWindow(MainWindowDependencies dependencies, QWidget *parent)
                            ? nullptr
                            : new rv1126b::EventViewController(
                                  {dependencies.eventRepository, dependencies.evidenceCache}, this)),
-      rtspPlayer_(dependencies.player), ftpReceiveServer_(dependencies.ftpReceiveServer), eventSyncForDevice_(std::move(dependencies.eventSyncForDevice)), boardApiForDevice_(dependencies.boardApiForDevice), evidenceMaintenance_(dependencies.evidenceMaintenance), evidenceRootPath_(std::move(dependencies.evidenceRootPath)), switchEvidenceRoot_(std::move(dependencies.switchEvidenceRoot)), deviceModel_(new DeviceTableModel(this)), propertyModel_(new DevicePropertyModel(this)), captureModel_(new CaptureRecordTableModel(this)), currentSystemSettings_(systemSettingsService_->load()), storageService_(currentSystemSettings_.storage), mockMode_(dependencies.mockMode)
+      rtspPlayer_(dependencies.player), ftpReceiveServer_(dependencies.ftpReceiveServer), eventSyncForDevice_(std::move(dependencies.eventSyncForDevice)), boardApiForDevice_(dependencies.boardApiForDevice), evidenceMaintenance_(dependencies.evidenceMaintenance), evidenceCache_(dependencies.evidenceCache), evidenceRepository_(dependencies.eventRepository), detectionWriter_(dependencies.detectionWriter), evidenceRootPath_(std::move(dependencies.evidenceRootPath)), switchEvidenceRoot_(std::move(dependencies.switchEvidenceRoot)), deviceModel_(new DeviceTableModel(this)), propertyModel_(new DevicePropertyModel(this)), captureModel_(new CaptureRecordTableModel(this)), currentSystemSettings_(systemSettingsService_->load()), storageService_(currentSystemSettings_.storage), mockMode_(dependencies.mockMode)
 {
     deviceModel_->setRealMode(!mockMode_);
     setWindowTitle(QStringLiteral("车牌识别雷达测速摄像机管理软件"));
@@ -393,6 +394,35 @@ void MainWindow::connectIntegrationController()
     {
         return;
     }
+    if (detectionWriter_ && evidenceCache_)
+    {
+        // 证据图一落盘就把这条检测结果写成用户能直接看的文件夹。
+        connect(evidenceCache_, &rv1126b::EvidenceCache::evidenceStored,
+                this, [this](const rv1126b::VehicleEvent& event, const rv1126b::EvidenceCacheEntry& entry) {
+                    if (!detectionWriter_) return;
+                    detectionWriter_->writeAutoBundle(event, entry.localFilePath);
+                });
+        connect(detectionWriter_, &rv1126b::DetectionResultWriter::bundleWritten,
+                this, [this](const rv1126b::EventIdentity&, const QString& folder) {
+                    ++detectionSyncWrittenCount_;
+                    detectionSyncLastWrite_ = QDateTime::currentDateTime();
+                    if (persistentStatusLabel_)
+                    {
+                        persistentStatusLabel_->setVisible(true);
+                        persistentStatusLabel_->setText(
+                            QStringLiteral("检测结果已保存 %1 条 · 最后 %2")
+                                .arg(detectionSyncWrittenCount_)
+                                .arg(detectionSyncLastWrite_.toString(QStringLiteral("HH:mm:ss"))));
+                    }
+                    Q_UNUSED(folder);
+                });
+        connect(detectionWriter_, &rv1126b::DetectionResultWriter::bundleFailed,
+                this, [this](const rv1126b::EventIdentity&, const QString& reason) {
+                    if (!persistentStatusLabel_) return;
+                    persistentStatusLabel_->setVisible(true);
+                    persistentStatusLabel_->setText(QStringLiteral("检测结果未能保存：%1").arg(reason));
+                });
+    }
     connect(integrationController_, &rv1126b::DeviceIntegrationController::discoveredDeviceUpserted,
             this, &MainWindow::handleDiscoveredDevice);
     connect(integrationController_, &rv1126b::DeviceIntegrationController::sessionChanged,
@@ -605,6 +635,21 @@ void MainWindow::applySystemSettings(bool initialApply)
     if (eventController_)
     {
         eventController_->setSyncEnabled(currentSystemSettings_.ui.autoListenDeviceData);
+    }
+    if (detectionWriter_)
+    {
+        // 检测结果自动写文件夹：目标目录不存在就新建（用户明确要求）。
+        detectionWriter_->setAutoEnabled(currentSystemSettings_.detectionSync.enabled);
+        detectionWriter_->setTargetRoot(currentSystemSettings_.detectionFolder());
+        if (currentSystemSettings_.detectionSync.enabled)
+        {
+            QString folderError;
+            if (!detectionWriter_->ensureTargetRoot(&folderError) && persistentStatusLabel_)
+            {
+                persistentStatusLabel_->setVisible(true);
+                persistentStatusLabel_->setText(folderError);
+            }
+        }
     }
 
     applyCaptureColumnVisibility();
@@ -1350,7 +1395,8 @@ void MainWindow::openDeviceConfig()
             boardApiForHost,
             deviceIdForHost,
             currentSystemSettings_.storage.rootPath,
-            saveStorageRoot);
+            saveStorageRoot,
+            rv1126b::DetectionPullDependencies{evidenceRepository_, detectionWriter_});
         dialog.exec();
         return;
     }

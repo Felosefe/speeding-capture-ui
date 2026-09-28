@@ -1,5 +1,8 @@
 #include "Rv1126bDeviceManagementDialog.h"
 
+#include "../rv1126b/services/BoardDataPullService.h"
+#include "../rv1126b/services/DetectionResultWriter.h"
+
 #include "../rv1126b/ports/IBoardApiClient.h"
 #include "../rv1126b/services/EmbeddedFtpReceiveServer.h"
 #include "../rv1126b/services/EventSyncService.h"
@@ -186,7 +189,8 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     std::function<rv1126b::IBoardApiClient*(const QString&)> boardApiForHost,
     std::function<QString(const QString&)> deviceIdForHost,
     const QString& storageRootPath,
-    std::function<bool(const QString&)> storageRootChangeHandler)
+    std::function<bool(const QString&)> storageRootChangeHandler,
+    rv1126b::DetectionPullDependencies detectionPull)
     : QDialog(parent)
     , deviceId_(deviceId)
     , controller_(controller)
@@ -201,6 +205,7 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     , evidenceRootPath_(evidenceRootPath)
     , storageRootPath_(storageRootPath)
     , deviceEndpointText_(deviceEndpointText)
+    , detectionPull_(detectionPull)
     , taskRefreshTimer_(new QTimer(this))
     , deviceOnline_(deviceOnline)
 {
@@ -398,6 +403,58 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     form->addRow(QStringLiteral("本地存储根目录"), storageRow);
     form->addRow(QStringLiteral("状态"), eventSyncStatus_);
     layout->addWidget(summary);
+
+    // ── 一键把板端已有数据拉回本机文件夹（用户第 5 项需求）────────────────────
+    // 界面上只留「目标文件夹 + 开始拉取 + 进度」，参数全部收起来。
+    auto* pullBox = new QGroupBox(QStringLiteral("一键把板端已有检测数据拉回本机文件夹"), page);
+    auto* pullLayout = new QVBoxLayout(pullBox);
+    auto* pullHint = new QLabel(
+        QStringLiteral("把这台相机上已经拍到的检测记录（车牌/速度/方向/OCR 结果 + 事件详情）"
+                       "一次性拉到下面这个文件夹，按「设备/日期/事件」分目录，"
+                       "文件夹不存在会自动新建。图片会由后台自动同步继续补齐。"),
+        pullBox);
+    pullHint->setWordWrap(true);
+    pullHint->setStyleSheet(QStringLiteral("color:#44515f;"));
+    pullLayout->addWidget(pullHint);
+
+    auto* pullRow = new QWidget(pullBox);
+    auto* pullRowLayout = new QHBoxLayout(pullRow);
+    pullRowLayout->setContentsMargins(0, 0, 0, 0);
+    boardPullButton_ = new QPushButton(QStringLiteral("开始拉取到本机"), pullRow);
+    boardPullButton_->setObjectName(QStringLiteral("boardDataPullButton"));
+    boardPullStatus_ = new QLabel(QStringLiteral("尚未开始"), pullRow);
+    boardPullStatus_->setObjectName(QStringLiteral("boardDataPullStatusLabel"));
+    boardPullStatus_->setWordWrap(true);
+    pullRowLayout->addWidget(boardPullButton_);
+    pullRowLayout->addWidget(boardPullStatus_, 1);
+    pullLayout->addWidget(pullRow);
+
+    const bool pullAvailable = detectionPull_.repository && detectionPull_.writer && boardApi_;
+    boardPullButton_->setEnabled(pullAvailable);
+    if (!pullAvailable) {
+        boardPullStatus_->setText(QStringLiteral("当前设备不可用（需要设备在线且已装配本地库）"));
+    } else {
+        boardPullStatus_->setText(QStringLiteral("将写入：%1")
+                                      .arg(detectionPull_.writer->targetRoot()));
+        boardPullService_ = new rv1126b::BoardDataPullService(
+            detectionPull_.repository, detectionPull_.writer, this);
+        connect(boardPullService_, &rv1126b::BoardDataPullService::progress,
+                this, &Rv1126bDeviceManagementDialog::handleBoardDataPullProgress);
+        connect(boardPullService_, &rv1126b::BoardDataPullService::finished,
+                this, &Rv1126bDeviceManagementDialog::handleBoardDataPullFinished);
+        connect(boardPullService_, &rv1126b::BoardDataPullService::failed,
+                this, [this](const QString& message) {
+                    if (boardPullStatus_) boardPullStatus_->setText(QStringLiteral("拉取失败：%1").arg(message));
+                });
+    }
+    connect(boardPullButton_, &QPushButton::clicked, this, [this]() {
+        if (boardPullService_ && boardPullService_->isRunning()) {
+            boardPullService_->cancel();
+            return;
+        }
+        startBoardDataPull();
+    });
+    layout->addWidget(pullBox);
 
     auto* actions = new QGroupBox(QStringLiteral("自动同步"), page);
     auto* actionsLayout = new QGridLayout(actions);
@@ -1869,6 +1926,55 @@ void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config
                   ? QStringLiteral("已在板端落盘，重启相机服务或断电重启后生效（本次重启前画面不变）")
                   : QStringLiteral("板端已保存的值与本次读取一致，无需重启"));
     ispStatus_->setText(lines.join(QStringLiteral("；")));
+}
+
+void Rv1126bDeviceManagementDialog::startBoardDataPull()
+{
+    if (!boardPullService_ || !boardApi_ || boardPullService_->isRunning()) {
+        return;
+    }
+    if (QMessageBox::question(
+            this, QStringLiteral("拉取板端数据"),
+            QStringLiteral("确认把这台相机上已有的检测记录拉回本机？\n"
+                           "范围：板端保留的全部事件（最多 5000 条）。\n"
+                           "目标文件夹：%1\n"
+                           "已存在的同类文件会被覆盖，目录结构不会动。")
+                .arg(boardPullStatus_ ? boardPullStatus_->text() : QString()))
+        != QMessageBox::Yes) {
+        return;
+    }
+    boardPullButton_->setText(QStringLiteral("停止拉取"));
+    boardPullStatus_->setText(QStringLiteral("正在读取板端事件列表..."));
+    boardPullService_->start(boardApi_, deviceId_, 5000);
+}
+
+void Rv1126bDeviceManagementDialog::cancelBoardDataPull()
+{
+    if (boardPullService_ && boardPullService_->isRunning()) {
+        boardPullService_->cancel();
+    }
+}
+
+void Rv1126bDeviceManagementDialog::handleBoardDataPullProgress(int seen, int written, int failed)
+{
+    if (!boardPullStatus_) return;
+    boardPullStatus_->setText(QStringLiteral("已读取 %1 条 · 已写入 %2 条 · 失败 %3 条")
+                                  .arg(seen)
+                                  .arg(written)
+                                  .arg(failed));
+}
+
+void Rv1126bDeviceManagementDialog::handleBoardDataPullFinished(int seen, int written, int failed,
+                                                               bool cancelled)
+{
+    if (boardPullButton_) {
+        boardPullButton_->setText(QStringLiteral("开始拉取到本机"));
+    }
+    if (!boardPullStatus_) return;
+    boardPullStatus_->setText(
+        cancelled
+            ? QStringLiteral("已停止：读取 %1 条，写入 %2 条").arg(seen).arg(written)
+            : QStringLiteral("拉取完成：读取 %1 条，写入 %2 条，失败 %3 条").arg(seen).arg(written).arg(failed));
 }
 
 QString Rv1126bDeviceManagementDialog::defaultLocalFtpAddress() const

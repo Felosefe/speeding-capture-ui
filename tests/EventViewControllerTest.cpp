@@ -46,6 +46,11 @@ public:
         return value(std::move(c), std::optional<VehicleEvent>{});
     }
 
+    RequestId loadDetail(const EventIdentity&, QObject*, ApiCompletion<std::optional<EventDetailSnapshot>> c) override
+    {
+        return value(std::move(c), std::optional<EventDetailSnapshot>{});
+    }
+
     RequestId deleteEvent(const EventIdentity& identity, QObject*, ApiCompletion<void> c) override
     {
         for (int i = 0; i < events.size(); ++i) {

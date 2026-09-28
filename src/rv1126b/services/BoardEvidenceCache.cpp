@@ -1,4 +1,4 @@
-﻿#include "BoardEvidenceCache.h"
+#include "BoardEvidenceCache.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -357,6 +357,7 @@ void BoardEvidenceCache::handleDownloadFinished(
     finishActive(identity);
     retryAttempts_.remove(identity);
     persistState(entry);
+    emit evidenceStored(event, entry);
     ClientAckCreate ack;
     ack.clientId = QStringLiteral("qt_primary");
     ack.evidenceSize = entry.contentLength;

@@ -73,6 +73,8 @@ private:
     QCheckBox* autoRecordCheck_ = nullptr;
     QCheckBox* vehiclePassRecordCheck_ = nullptr;
     QSpinBox* maxVideoSegmentSpin_ = nullptr;
+    QCheckBox* detectionSyncCheck_ = nullptr;
+    QLineEdit* detectionFolderEdit_ = nullptr;
 
     QCheckBox* startWithSystemCheck_ = nullptr;
     QCheckBox* dailySyncCheck_ = nullptr;

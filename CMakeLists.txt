@@ -87,6 +87,10 @@ qt_add_executable(CameraManagerApp
     src/rv1126b/services/BoardFtpTaskSnapshotService.h
     src/rv1126b/services/BoardFtpService.cpp
     src/rv1126b/services/BoardFtpService.h
+    src/rv1126b/services/BoardDataPullService.cpp
+    src/rv1126b/services/BoardDataPullService.h
+    src/rv1126b/services/DetectionResultWriter.cpp
+    src/rv1126b/services/DetectionResultWriter.h
     src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
     src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/rv1126b/services/EventSyncService.h
@@ -479,6 +483,10 @@ add_test(NAME DeviceOperationsControllerTest COMMAND DeviceOperationsControllerT
 qt_add_executable(DeviceOperationsUiTest
     tests/DeviceOperationsUiTest.cpp
     src/rv1126b/application/DeviceOperationsController.cpp
+    src/rv1126b/services/BoardDataPullService.cpp
+    src/rv1126b/services/BoardDataPullService.h
+    src/rv1126b/services/DetectionResultWriter.cpp
+    src/rv1126b/services/DetectionResultWriter.h
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
     src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
     src/rv1126b/services/EmbeddedFtpReceiveServer.h
@@ -801,6 +809,33 @@ target_compile_definitions(LocalEvidenceServiceTest
 
 add_test(NAME LocalEvidenceServiceTest COMMAND LocalEvidenceServiceTest)
 
+qt_add_executable(DetectionResultWriterTest
+    tests/DetectionResultWriterTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/DetectionResultWriter.cpp
+    src/rv1126b/services/DetectionResultWriter.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(DetectionResultWriterTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(DetectionResultWriterTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME DetectionResultWriterTest COMMAND DetectionResultWriterTest)
+
 qt_add_executable(FtpTaskSnapshotServiceTest
     tests/FtpTaskSnapshotServiceTest.cpp
     src/rv1126b/core/Result.h
@@ -876,6 +911,9 @@ qt_add_executable(ApplicationRuntimeTest
     src/rv1126b/services/BoardEvidenceCache.cpp
     src/rv1126b/services/BoardFtpService.cpp
     src/rv1126b/services/BoardFtpTaskSnapshotService.cpp
+    src/rv1126b/services/BoardDataPullService.cpp
+    src/rv1126b/services/BoardDataPullService.h
+    src/rv1126b/services/DetectionResultWriter.cpp
     src/rv1126b/services/EmbeddedFtpReceiveServer.cpp
     src/rv1126b/services/EmbeddedFtpReceiveServer.h
     src/rv1126b/services/EvidenceCacheMaintenanceService.cpp

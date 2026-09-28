@@ -43,6 +43,10 @@ public:
         const EventIdentity& identity,
         QObject* context,
         ApiCompletion<std::optional<VehicleEvent>> completion) override;
+    RequestId loadDetail(
+        const EventIdentity& identity,
+        QObject* context,
+        ApiCompletion<std::optional<EventDetailSnapshot>> completion) override;
     RequestId deleteEvent(
         const EventIdentity& identity,
         QObject* context,

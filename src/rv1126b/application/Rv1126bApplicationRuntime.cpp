@@ -7,6 +7,7 @@
 #include "../security/WindowsCredentialStore.h"
 #include "../services/BoardDeviceFleetService.h"
 #include "../services/BoardEvidenceCache.h"
+#include "../services/DetectionResultWriter.h"
 #include "../services/EmbeddedFtpReceiveServer.h"
 #include "../services/EvidenceCacheMaintenanceService.h"
 #include "../storage/SqliteEventRepository.h"
@@ -79,6 +80,9 @@ Rv1126bApplicationRuntime::Rv1126bApplicationRuntime(
         }, repository_, evidenceRootPath_, this);
     ftpReceiveServer_ = new EmbeddedFtpReceiveServer(this);
     evidenceMaintenance_ = new EvidenceCacheMaintenanceService(evidenceRootPath_, this);
+    detectionWriter_ = new DetectionResultWriter(repository_, this);
+    detectionWriter_->setTargetRoot(settings_.detectionFolder());
+    detectionWriter_->setAutoEnabled(settings_.detectionSync.enabled);
     player_ = new QtMultimediaRtspPlayer(this);
 }
 
@@ -121,6 +125,7 @@ MainWindowDependencies Rv1126bApplicationRuntime::mainWindowDependencies() const
     dependencies.directProbe = directProbe_;
     dependencies.eventRepository = repository_;
     dependencies.evidenceCache = evidenceCache_;
+    dependencies.detectionWriter = detectionWriter_;
     if (fleet_) {
         for (const DeviceSessionSnapshot& snapshot : fleet_->sessions()) {
             if (EventSyncService* sync = fleet_->eventSyncForDevice(snapshot.profile.deviceId)) {
@@ -172,6 +177,7 @@ MainWindowDependencies Rv1126bApplicationRuntime::mainWindowDependencies() const
 BoardDeviceFleetService* Rv1126bApplicationRuntime::fleet() const { return fleet_; }
 SqliteEventRepository* Rv1126bApplicationRuntime::repository() const { return repository_; }
 BoardEvidenceCache* Rv1126bApplicationRuntime::evidenceCache() const { return evidenceCache_; }
+DetectionResultWriter* Rv1126bApplicationRuntime::detectionWriter() const { return detectionWriter_; }
 EvidenceCacheMaintenanceService* Rv1126bApplicationRuntime::evidenceMaintenance() const { return evidenceMaintenance_; }
 QtMultimediaRtspPlayer* Rv1126bApplicationRuntime::player() const { return player_; }
 QString Rv1126bApplicationRuntime::evidenceRootPath() const { return evidenceRootPath_; }

@@ -48,6 +48,12 @@ public:
         const EventIdentity& identity,
         QObject* context,
         ApiCompletion<std::optional<VehicleEvent>> completion) = 0;
+    // 读出本地已缓存的详情快照（同步时 /events/{e}/{t} 的归一化结果 + 原始 JSON）。
+    // 写"用户可读资料包"只需要本地库，不必再连板端。
+    virtual RequestId loadDetail(
+        const EventIdentity& identity,
+        QObject* context,
+        ApiCompletion<std::optional<EventDetailSnapshot>> completion) = 0;
     virtual RequestId deleteEvent(
         const EventIdentity& identity,
         QObject* context,

@@ -25,6 +25,15 @@ namespace rv1126b {
 class EmbeddedFtpReceiveServer;
 class EventSyncService;
 class IBoardApiClient;
+class IEventRepository;
+class DetectionResultWriter;
+class BoardDataPullService;
+
+// 「一键把板端数据拉回本机文件夹」需要的两个依赖（都允许为空，为空时按钮置灰）。
+struct DetectionPullDependencies {
+    IEventRepository* repository = nullptr;
+    DetectionResultWriter* writer = nullptr;
+};
 }
 
 class Rv1126bDeviceManagementDialog final : public QDialog
@@ -49,7 +58,8 @@ public:
         std::function<rv1126b::IBoardApiClient*(const QString&)> boardApiForHost = {},
         std::function<QString(const QString&)> deviceIdForHost = {},
         const QString& storageRootPath = QString(),
-        std::function<bool(const QString&)> storageRootChangeHandler = {});
+        std::function<bool(const QString&)> storageRootChangeHandler = {},
+        rv1126b::DetectionPullDependencies detectionPull = {});
     ~Rv1126bDeviceManagementDialog() override;
 
 protected:
@@ -96,6 +106,11 @@ private:
     void writeLocalFtpTargetRow();
     QString defaultEventStorageRoot() const;
     QString currentEventStorageRoot() const;
+    // 「一键拉回本机文件夹」：按板端 cursor 翻页读事件 + 详情，写成用户可读资料包。
+    void startBoardDataPull();
+    void cancelBoardDataPull();
+    void handleBoardDataPullProgress(int seen, int written, int failed);
+    void handleBoardDataPullFinished(int seen, int written, int failed, bool cancelled);
     QString currentEventExportRoot() const;
     QStringList eventExportHosts() const;
     void browseEventStorageRoot();
@@ -158,6 +173,11 @@ private:
     QPushButton* eventSyncPollButton_ = nullptr;
     QPushButton* eventSyncAllButton_ = nullptr;
     QPushButton* eventSyncFromNowButton_ = nullptr;
+    QPushButton* boardPullButton_ = nullptr;
+    QLabel* boardPullStatus_ = nullptr;
+    rv1126b::BoardDataPullService* boardPullService_ = nullptr;
+    rv1126b::DetectionResultWriter* detectionWriter_ = nullptr;
+    rv1126b::DetectionPullDependencies detectionPull_;
     QLineEdit* eventSyncHostsEdit_ = nullptr;
     QSpinBox* eventExportDaysSpin_ = nullptr;
     QLineEdit* eventStorageRootEdit_ = nullptr;

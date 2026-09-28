@@ -9,6 +9,7 @@
 #include "../rv1126b/application/DeviceOperationsController.h"
 #include "../rv1126b/application/EventViewController.h"
 
+#include <QDateTime>
 #include <QMainWindow>
 
 #include <functional>
@@ -45,6 +46,8 @@ class LivePreviewPanel;
 namespace rv1126b {
 class EmbeddedFtpReceiveServer;
 class EvidenceCacheMaintenanceService;
+class DetectionResultWriter;
+class IEventRepository;
 }
 
 struct MainWindowDependencies {
@@ -56,6 +59,7 @@ struct MainWindowDependencies {
     rv1126b::ForgetDeviceHandler forgetDevice;
     rv1126b::IEventRepository* eventRepository = nullptr;
     rv1126b::EvidenceCache* evidenceCache = nullptr;
+    rv1126b::DetectionResultWriter* detectionWriter = nullptr;
     QVector<rv1126b::EventSyncService*> eventSyncServices;
     std::function<rv1126b::EventSyncService*(const QString&)> eventSyncForDevice;
     rv1126b::BoardApiResolver boardApiForDevice;
@@ -216,6 +220,11 @@ private:
     std::function<rv1126b::EventSyncService*(const QString&)> eventSyncForDevice_;
     rv1126b::BoardApiResolver boardApiForDevice_;
     rv1126b::EvidenceCacheMaintenanceService* evidenceMaintenance_ = nullptr;
+    rv1126b::EvidenceCache* evidenceCache_ = nullptr;
+    rv1126b::IEventRepository* evidenceRepository_ = nullptr;
+    rv1126b::DetectionResultWriter* detectionWriter_ = nullptr;
+    int detectionSyncWrittenCount_ = 0;
+    QDateTime detectionSyncLastWrite_;
     QString evidenceRootPath_;
     std::function<bool(const QString&)> switchEvidenceRoot_;
     DeviceTableModel* deviceModel_ = nullptr;
