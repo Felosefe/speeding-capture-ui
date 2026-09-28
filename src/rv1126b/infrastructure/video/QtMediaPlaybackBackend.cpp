@@ -167,9 +167,16 @@ void QtMediaPlaybackBackend::handleVideoFrame(const QVideoFrame& frame, quint64 
     }
     // 窗口不可见（最小化/被藏起）时不要做 toImage()：这一步会把硬解帧从 GPU 读回内存，
     // 是整条链路最贵的一步，而画面根本没人看。
+    // 注意：分辨率通知不能一起省掉——上面 LivePreviewPanel 的车道线 overlay 依赖它拿
+    // 帧尺寸来算坐标系，所以这里在尺寸变化那一帧仍然放行一次。
     if (!videoWidget_->isVisible()) {
+        if (frame.size() != lastNotifiedFrameSize_) {
+            lastNotifiedFrameSize_ = frame.size();
+            emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
+        }
         return;
     }
+    lastNotifiedFrameSize_ = frame.size();
     if (renderThrottle_.isValid() && renderThrottle_.elapsed() < 33) {
         return;
     }
