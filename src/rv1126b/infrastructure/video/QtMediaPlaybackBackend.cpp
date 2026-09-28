@@ -157,14 +157,24 @@ void QtMediaPlaybackBackend::handleVideoFrame(const QVideoFrame& frame, quint64 
     if (!frame.isValid()) {
         return;
     }
-    emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
+    // 解码线程每来一帧都会走到这里。旧的写法是"先无条件发 frameReady，再决定要不要渲染"，
+    // 于是即使渲染被限流到 30fps，上层（帧停滞看门狗、分辨率通知、界面刷新）仍按解码全帧率
+    // 被唤醒一次。板端主码流是 2688x1520@25，这里改成只在真正渲染/需要分辨率时才发信号，
+    // 把无谓的界面唤醒去掉（看门狗另有每秒独立定时器，不依赖本信号）。
     if (!videoWidget_) {
+        emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
+        return;
+    }
+    // 窗口不可见（最小化/被藏起）时不要做 toImage()：这一步会把硬解帧从 GPU 读回内存，
+    // 是整条链路最贵的一步，而画面根本没人看。
+    if (!videoWidget_->isVisible()) {
         return;
     }
     if (renderThrottle_.isValid() && renderThrottle_.elapsed() < 33) {
         return;
     }
     renderThrottle_.restart();
+    emit frameReady(attemptToken, frame.size(), frame.surfaceFormat().streamFrameRate());
     static_cast<VideoFrameWidget*>(videoWidget_.data())->setFrame(frame.toImage());
 }
 
