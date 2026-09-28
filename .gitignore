@@ -21,3 +21,6 @@ ui_test_err.txt
 api_test_out.txt
 api_test_err.txt
 device_ops_ui_test.txt
+
+# Broken pre-existing repo metadata, kept on disk only
+.git_broken_*/
