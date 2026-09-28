@@ -809,6 +809,36 @@ target_compile_definitions(LocalEvidenceServiceTest
 
 add_test(NAME LocalEvidenceServiceTest COMMAND LocalEvidenceServiceTest)
 
+qt_add_executable(BoardDataPullServiceTest
+    tests/BoardDataPullServiceTest.cpp
+    src/rv1126b/core/Result.h
+    src/rv1126b/core/ValueTypes.h
+    src/rv1126b/domain/Models.h
+    src/rv1126b/ports/IBoardApiClient.h
+    src/rv1126b/ports/IEventRepository.h
+    src/rv1126b/protocol/ApiDtos.h
+    src/rv1126b/services/BoardDataPullService.cpp
+    src/rv1126b/services/BoardDataPullService.h
+    src/rv1126b/services/DetectionResultWriter.cpp
+    src/rv1126b/services/DetectionResultWriter.h
+    src/rv1126b/storage/SqliteEventRepository.cpp
+    src/rv1126b/storage/SqliteEventRepository.h
+)
+
+target_link_libraries(BoardDataPullServiceTest
+    PRIVATE
+        Qt6::Core
+        Qt6::Sql
+        Qt6::Test
+)
+
+target_compile_options(BoardDataPullServiceTest
+    PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+add_test(NAME BoardDataPullServiceTest COMMAND BoardDataPullServiceTest)
+
 qt_add_executable(DetectionResultWriterTest
     tests/DetectionResultWriterTest.cpp
     src/rv1126b/core/Result.h
