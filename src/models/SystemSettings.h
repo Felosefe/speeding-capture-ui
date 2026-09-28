@@ -12,6 +12,9 @@ struct UiSettings {
     bool autoListenDeviceData = true;
     bool autoConnectOnStart = false;
     QString lastSelectedVideoDeviceId;
+    // 实时预览默认码流："main" = 主码流 /live/0（出厂默认），"sub" = 辅码流 /live/1。
+    // 用户在预览页切换码流后会被记住，下次启动继续用同一路。
+    QString rtspStreamRole = QStringLiteral("main");
     QString fontFamily = QStringLiteral("Microsoft YaHei");
     int fontPointSize = 10;
     int captureListMaxRows = 1000;

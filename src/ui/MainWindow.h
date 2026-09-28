@@ -141,6 +141,9 @@ private:
 
     QTableView* createDeviceTable();
     QTableView* createPropertyTable();
+    // 左下角属性表要显示的板端「展示配置」（点位名称/道路方向/限速）。
+    // 真机模式下本机 DeviceConfig 没有任何写入者，板端才是唯一真源。
+    void refreshBoardSiteInfo(const QString& deviceId);
     QWidget* createCaptureRecordPanel();
     QTableView* createCaptureTable(QSortFilterProxyModel* proxyModel);
     QSortFilterProxyModel* createCaptureProxy(const QString& plateStateFilter);
@@ -217,6 +220,8 @@ private:
     std::function<bool(const QString&)> switchEvidenceRoot_;
     DeviceTableModel* deviceModel_ = nullptr;
     DevicePropertyModel* propertyModel_ = nullptr;
+    QHash<QString, rv1126b::EvidenceConfigDto> boardSiteInfoByDevice_;
+    QString boardSiteInfoRequestedFor_;
     CaptureRecordTableModel* captureModel_ = nullptr;
     SystemSettings currentSystemSettings_;
     CaptureStorageService storageService_;

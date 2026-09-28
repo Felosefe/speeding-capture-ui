@@ -3,9 +3,11 @@
 #include <QString>
 
 struct DeviceConfig {
-    QString location = QStringLiteral("测试路口");
-    QString direction = QStringLiteral("由北向南");
-    QString laneName = QStringLiteral("一车道");
+    // 点位信息在真机模式下不在本机配置，而是从板端读取（设备配置 › 展示配置）。
+    // 这里保持空值，避免"没读到板端值"被误显示成一条看起来真实的假配置。
+    QString location;
+    QString direction;
+    QString laneName;
     int speedLimitKmh = 60;
     bool savePlateImage = true;
     bool enableOverspeedAlert = true;
@@ -40,4 +42,13 @@ struct DeviceConfig {
     bool uploadEnabled = false;
     QString uploadServer = QStringLiteral("192.168.1.200");
     int uploadPort = 9000;
+
+    // 点位信息（地点/通道/方向/限速）是否完全未设置。真机模式下这些值由板端提供，
+    // 本机结构体保持空值，界面据此显示"未下发"而不是假配置。
+    bool siteInfoUnset() const
+    {
+        return location.trimmed().isEmpty()
+            && laneName.trimmed().isEmpty()
+            && direction.trimmed().isEmpty();
+    }
 };

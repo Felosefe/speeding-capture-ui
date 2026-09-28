@@ -410,11 +410,33 @@ void MainWindow::connectIntegrationController()
         connect(integrationController_, &rv1126b::DeviceIntegrationController::playbackError,
                 livePreviewPanel_, &LivePreviewPanel::setPlaybackError);
         connect(livePreviewPanel_, &LivePreviewPanel::streamRoleChanged,
-                integrationController_, &rv1126b::DeviceIntegrationController::setStreamRole);
+                this, [this](rv1126b::RtspStreamRole role) {
+                    if (!integrationController_) return;
+                    integrationController_->setStreamRole(role);
+                    // 记住用户选的码流，下次启动继续用同一路（和"上次视频设备"一样持久化）。
+                    const QString value = role == rv1126b::RtspStreamRole::Main
+                                              ? QStringLiteral("main")
+                                              : QStringLiteral("sub");
+                    if (currentSystemSettings_.ui.rtspStreamRole == value) return;
+                    currentSystemSettings_.ui.rtspStreamRole = value;
+                    if (!systemSettingsService_->save(currentSystemSettings_) && persistentStatusLabel_)
+                    {
+                        persistentStatusLabel_->setVisible(true);
+                        persistentStatusLabel_->setText(QStringLiteral("无法保存默认码流设置：%1")
+                                                            .arg(systemSettingsService_->lastError()));
+                    }
+                });
         if (rtspPlayer_)
         {
             livePreviewPanel_->setPlaybackState(rtspPlayer_->state());
         }
+        // 回填上次选定的码流（出厂默认主码流：这台板子的辅码流是关闭的）。
+        const rv1126b::RtspStreamRole savedRole =
+            currentSystemSettings_.ui.rtspStreamRole == QStringLiteral("sub")
+                ? rv1126b::RtspStreamRole::Sub
+                : rv1126b::RtspStreamRole::Main;
+        livePreviewPanel_->setStreamRole(savedRole);
+        integrationController_->setStreamRole(savedRole);
     }
     for (const rv1126b::DeviceSessionSnapshot &snapshot : integrationController_->sessionSnapshots())
     {
@@ -766,6 +788,22 @@ QTableView *MainWindow::createDeviceTable()
     table->setModel(deviceModel_);
     table->setContextMenuPolicy(Qt::CustomContextMenu);
     configureTableView(table);
+
+    if (!mockMode_)
+    {
+        // 真机模式的设备行已经是一个竖排卡片（名称 / IP·状态 / 最后心跳都在第一列里），
+        // 其余横向列全部隐藏，省掉横向滚动条，也让这一栏竖着排得下更多设备。
+        for (int column = DeviceTableModel::IpColumn; column < DeviceTableModel::ColumnCount; ++column)
+        {
+            table->setColumnHidden(column, true);
+        }
+        table->setWordWrap(true);
+        table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        if (QHeaderView *header = table->horizontalHeader())
+        {
+            header->setSectionResizeMode(DeviceTableModel::NameColumn, QHeaderView::Stretch);
+        }
+    }
 
     connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, &MainWindow::updateDeviceProperties);
     connect(table->selectionModel(), &QItemSelectionModel::currentRowChanged, this, [this]()
@@ -1673,12 +1711,67 @@ void MainWindow::openSelectedLocalFolder()
 void MainWindow::handleDeviceForgotten(const QString &deviceId)
 {
     deviceModel_->removeDevice(deviceId);
+    boardSiteInfoByDevice_.remove(deviceId);
+    if (boardSiteInfoRequestedFor_ == deviceId)
+    {
+        boardSiteInfoRequestedFor_.clear();
+    }
     if (deviceModel_->rowCount() > 0)
         selectDeviceRow(0);
     else
         propertyModel_->clear();
     updateCaptureControls();
     updateDeviceProperties();
+}
+
+void MainWindow::refreshBoardSiteInfo(const QString &deviceId)
+{
+    // 左下角原来显示的地点/通道/方向/限速来自本机 DeviceConfig，真机模式下没人写它，
+    // 于是永远是结构体默认值，和「设备配置 › 展示配置」里的板端值对不上。
+    // 现在改为：设备在线时从板端读一次真实展示配置并缓存，属性表用它显示。
+    if (mockMode_ || deviceId.isEmpty() || !boardApiForDevice_)
+    {
+        propertyModel_->setBoardSiteInfo(QString(), QString(), 0);
+        return;
+    }
+
+    const auto cached = boardSiteInfoByDevice_.constFind(deviceId);
+    if (cached != boardSiteInfoByDevice_.constEnd())
+    {
+        propertyModel_->setBoardSiteInfo(cached->evidence.siteName, cached->evidence.roadDirection,
+                                         cached->evidence.speedLimitKmh);
+        return;
+    }
+
+    propertyModel_->setBoardSiteInfo(QString(), QString(), 0);
+    if (boardSiteInfoRequestedFor_ == deviceId)
+    {
+        return;
+    }
+    rv1126b::IBoardApiClient *api = boardApiForDevice_(deviceId);
+    if (!api)
+    {
+        return;
+    }
+
+    boardSiteInfoRequestedFor_ = deviceId;
+    api->getEvidenceConfig(this, [this, deviceId](rv1126b::ApiResult<rv1126b::EvidenceConfigDto> result) {
+        if (boardSiteInfoRequestedFor_ == deviceId)
+        {
+            boardSiteInfoRequestedFor_.clear();
+        }
+        if (!result.isSuccess())
+        {
+            return;
+        }
+        boardSiteInfoByDevice_.insert(deviceId, result.value());
+        const int row = currentDeviceRow();
+        const Device *device = deviceModel_->deviceAt(row);
+        if (device && device->id == deviceId)
+        {
+            updateDeviceProperties();
+        }
+    });
 }
 
 void MainWindow::updateDeviceProperties()
@@ -1691,6 +1784,10 @@ void MainWindow::updateDeviceProperties()
     const CaptureRecord *latestRecordPtr = latestRecord ? &(*latestRecord) : nullptr;
 
     propertyModel_->setDevice(device, latestRecordPtr);
+    if (device)
+    {
+        refreshBoardSiteInfo(device->id);
+    }
     if (!mockMode_ && operationsController_)
     {
         operationsController_->selectDevice(device ? device->id : QString());

@@ -342,17 +342,18 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(4);
 
-    auto* header = new QHBoxLayout;
     deviceLabel_ = new QLabel(QStringLiteral("实时预览"), this);
     deviceLabel_->setObjectName(QStringLiteral("liveDeviceLabel"));
     stateLabel_ = new QLabel(playbackStateText(rv1126b::RtspPlayerState::Idle), this);
     stateLabel_->setObjectName(QStringLiteral("livePlaybackStateLabel"));
     streamCombo_ = new QComboBox(this);
     streamCombo_->setObjectName(QStringLiteral("rtspStreamRoleCombo"));
-    streamCombo_->addItem(QStringLiteral("辅码流 /live/1"),
-                          static_cast<int>(rv1126b::RtspStreamRole::Sub));
-    streamCombo_->addItem(QStringLiteral("主码流 /live/0"),
+    streamCombo_->setToolTip(QStringLiteral("默认使用主码流（画面最清晰）。网络或电脑吃力时可切到辅码流，选择会被记住。"));
+    // 顺序即默认值：主码流在前，与出版默认一致；用户在系统设置或此处改动后会被持久化。
+    streamCombo_->addItem(QStringLiteral("主码流（高清）"),
                           static_cast<int>(rv1126b::RtspStreamRole::Main));
+    streamCombo_->addItem(QStringLiteral("辅码流（流畅）"),
+                          static_cast<int>(rv1126b::RtspStreamRole::Sub));
 
     triggerModeCombo_ = new QComboBox(this);
     triggerModeCombo_->setObjectName(QStringLiteral("triggerModeCombo"));
@@ -378,9 +379,21 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     detectionStatus_ = new QLabel(this);
     detectionStatus_->setObjectName(QStringLiteral("lineRegionStatusLabel"));
 
-    header->addWidget(deviceLabel_);
-    header->addStretch(1);
-    header->addWidget(detectionStatus_);
+    // 以前这一排横着塞了 12 个控件（设备名/线位状态/触发模式/车道方向/三个复选框/
+    // 刷新线位/保存并应用/播放状态/码流），窄窗口下全部挤在一起。
+    // 现在拆成两行：第一行只放"这是哪台设备 + 在播什么"，第二行放线位相关操作。
+    auto* headerTop = new QHBoxLayout;
+    headerTop->setContentsMargins(0, 0, 0, 0);
+    headerTop->addWidget(deviceLabel_);
+    headerTop->addWidget(stateLabel_);
+    headerTop->addStretch(1);
+    headerTop->addWidget(new QLabel(QStringLiteral("码流"), this));
+    headerTop->addWidget(streamCombo_);
+    root->addLayout(headerTop);
+
+    auto* header = new QHBoxLayout;
+    header->setContentsMargins(0, 0, 0, 0);
+    header->addWidget(new QLabel(QStringLiteral("线位"), this));
     header->addWidget(triggerModeCombo_);
     header->addWidget(laneDirectionCombo_);
     header->addWidget(showTriggerLineCheck_);
@@ -388,8 +401,7 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     header->addWidget(showLightLineCheck_);
     header->addWidget(refreshDetectionButton_);
     header->addWidget(saveDetectionButton_);
-    header->addWidget(stateLabel_);
-    header->addWidget(streamCombo_);
+    header->addWidget(detectionStatus_, 1);
     root->addLayout(header);
 
     QWidget* output = player ? player->outputWidget() : nullptr;
@@ -421,6 +433,7 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     }
 
     connect(streamCombo_, &QComboBox::currentIndexChanged, this, [this](int) {
+        if (updatingStreamCombo_) return;
         emit streamRoleChanged(static_cast<rv1126b::RtspStreamRole>(
             streamCombo_->currentData().toInt()));
     });
@@ -481,6 +494,22 @@ void LivePreviewPanel::setBoardApiClient(rv1126b::IBoardApiClient* boardApi)
     triggerModeDirty_ = false;
     lineRegionDirty_ = false;
     loadDetectionConfig();
+}
+
+void LivePreviewPanel::setStreamRole(rv1126b::RtspStreamRole role)
+{
+    if (!streamCombo_) {
+        return;
+    }
+    const int index = streamCombo_->findData(static_cast<int>(role));
+    if (index < 0 || index == streamCombo_->currentIndex()) {
+        return;
+    }
+    // 回填持久化设置时不要发出 streamRoleChanged——否则启动阶段会多触发一次重连，
+    // 而且用户此时还没连设备，重连是空动作。控制器由调用方自行同步。
+    updatingStreamCombo_ = true;
+    streamCombo_->setCurrentIndex(index);
+    updatingStreamCombo_ = false;
 }
 
 void LivePreviewPanel::setPlaybackState(rv1126b::RtspPlayerState state)

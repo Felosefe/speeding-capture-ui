@@ -1,5 +1,7 @@
 #include "../src/rv1126b/application/DeviceIntegrationController.h"
 #include "../src/ui/DeviceDiscoveryDialog.h"
+
+#include "../src/rv1126b/text/Text.h"
 #include "../src/ui/LivePreviewPanel.h"
 
 #include <QComboBox>
@@ -221,7 +223,7 @@ void DeviceIntegrationUiTest::discoveryDialogShowsAuthenticationFailure()
     QTest::mouseClick(connectButton, Qt::LeftButton);
     fleet.sendState(DeviceSessionState::AuthenticationFailed);
 
-    QTRY_COMPARE(message->text(), QStringLiteral("认证失败，请重新配置 Token"));
+    QTRY_COMPARE(message->text(), rv1126b::text::AuthenticationFailed);
     QVERIFY(connectButton->isEnabled());
     QVERIFY(!message->text().contains(QStringLiteral("wrong-token-must-not-appear")));
 }
@@ -252,10 +254,11 @@ void DeviceIntegrationUiTest::livePanelEmbedsOutputAndSelectsStreams()
         auto* combo = panel.findChild<QComboBox*>(QStringLiteral("rtspStreamRoleCombo"));
         auto* state = panel.findChild<QLabel*>(QStringLiteral("livePlaybackStateLabel"));
         QVERIFY(combo);
-        QCOMPARE(combo->currentData().toInt(), static_cast<int>(RtspStreamRole::Sub));
+        // 默认主码流（index 0），辅码流是 index 1。
+        QCOMPARE(combo->currentData().toInt(), static_cast<int>(RtspStreamRole::Main));
 
         int roleSignalCount = 0;
-        RtspStreamRole emittedRole = RtspStreamRole::Sub;
+        RtspStreamRole emittedRole = RtspStreamRole::Main;
         connect(&panel, &LivePreviewPanel::streamRoleChanged, &panel,
                 [&](RtspStreamRole role) {
                     ++roleSignalCount;
@@ -263,7 +266,12 @@ void DeviceIntegrationUiTest::livePanelEmbedsOutputAndSelectsStreams()
                 });
         combo->setCurrentIndex(1);
         QCOMPARE(roleSignalCount, 1);
-        QCOMPARE(emittedRole, RtspStreamRole::Main);
+        QCOMPARE(emittedRole, RtspStreamRole::Sub);
+
+        // 回填持久化码流时不应该触发重连信号。
+        panel.setStreamRole(RtspStreamRole::Main);
+        QCOMPARE(combo->currentIndex(), 0);
+        QCOMPARE(roleSignalCount, 1);
 
         panel.setPlaybackState(RtspPlayerState::Reconnecting);
         QCOMPARE(state->text(), QStringLiteral("视频重连中…"));

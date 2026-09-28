@@ -86,6 +86,10 @@ SystemSettings SystemSettingsService::normalized(SystemSettings settings) const
     settings.ui.fontPointSize = qBound(6, settings.ui.fontPointSize, 48);
     settings.ui.captureListMaxRows = qBound(1, settings.ui.captureListMaxRows, 100000);
     settings.ui.previewFrameRate = qBound(1, settings.ui.previewFrameRate, 60);
+    if (settings.ui.rtspStreamRole != QStringLiteral("main")
+        && settings.ui.rtspStreamRole != QStringLiteral("sub")) {
+        settings.ui.rtspStreamRole = SystemSettings::defaults().ui.rtspStreamRole;
+    }
 
     if (settings.ui.captureListFields.isEmpty()) {
         settings.ui.captureListFields = SystemSettings::defaults().ui.captureListFields;
@@ -117,6 +121,8 @@ void SystemSettingsService::readUiSettings(QSettings& store, UiSettings& setting
     settings.autoConnectOnStart = store.value(QStringLiteral("autoConnectOnStart"), settings.autoConnectOnStart).toBool();
     settings.lastSelectedVideoDeviceId = store.value(QStringLiteral("lastSelectedVideoDeviceId"),
                                                       settings.lastSelectedVideoDeviceId).toString();
+    settings.rtspStreamRole = store.value(QStringLiteral("rtspStreamRole"),
+                                          settings.rtspStreamRole).toString();
     settings.fontFamily = store.value(QStringLiteral("fontFamily"), settings.fontFamily).toString();
     settings.fontPointSize = store.value(QStringLiteral("fontPointSize"), settings.fontPointSize).toInt();
     settings.captureListMaxRows = store.value(QStringLiteral("captureListMaxRows"), settings.captureListMaxRows).toInt();
@@ -176,6 +182,7 @@ void SystemSettingsService::writeUiSettings(QSettings& store, const UiSettings& 
     store.setValue(QStringLiteral("autoListenDeviceData"), settings.autoListenDeviceData);
     store.setValue(QStringLiteral("autoConnectOnStart"), settings.autoConnectOnStart);
     store.setValue(QStringLiteral("lastSelectedVideoDeviceId"), settings.lastSelectedVideoDeviceId);
+    store.setValue(QStringLiteral("rtspStreamRole"), settings.rtspStreamRole);
     store.setValue(QStringLiteral("fontFamily"), settings.fontFamily);
     store.setValue(QStringLiteral("fontPointSize"), settings.fontPointSize);
     store.setValue(QStringLiteral("captureListMaxRows"), settings.captureListMaxRows);

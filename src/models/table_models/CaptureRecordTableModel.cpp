@@ -30,18 +30,90 @@ QString ocrText(const rv1126b::VehicleEvent& event)
     }
 }
 
-QString qualityText(rv1126b::TimeQuality quality)
+QString qualityText(const rv1126b::WireEnum<rv1126b::TimeQuality>& quality)
 {
     using rv1126b::TimeQuality;
-    switch (quality) {
+    switch (quality.value) {
     case TimeQuality::NativeUtc: return QStringLiteral("UTC 已验证");
     case TimeQuality::ConfiguredOffset: return QStringLiteral("已应用偏移");
     case TimeQuality::BoardEpochUnverified: return QStringLiteral("板端时间未校验");
     case TimeQuality::AppApiSetCurrentBoot: return QStringLiteral("本次启动已由应用校时");
     case TimeQuality::RtcRestoredCurrentBoot: return QStringLiteral("本次启动 RTC 已恢复");
     case TimeQuality::Unknown:
-    default: return QStringLiteral("时间质量未知");
+    default:
+        // 板端现场固件（2026-09 那批）在 formal JSON 里把 time_quality 写成空串，
+        // 于是所有事件都落进 Unknown。这里把"板端没给"和"出现了本软件不认识的
+        // 新取值"分开说清楚，并保留原始值，便于排查而不是只显示一句"未知"。
+        if (quality.rawValue.isEmpty()) {
+            return QStringLiteral("板端未提供");
+        }
+        if (quality.rawValue == QStringLiteral("legacy_unknown")) {
+            return QStringLiteral("历史事件（板端未记录）");
+        }
+        return QStringLiteral("未知（%1）").arg(quality.rawValue);
     }
+}
+
+// 车牌颜色：板端 OCR 库给的是英文 token（blue/green/yellow...），界面上要中文。
+// 认不出来的取值一律原样返回，避免把模拟数据里已经是中文的值吃掉。
+QString plateColorText(const QString& raw)
+{
+    const QString value = raw.trimmed();
+    if (value.isEmpty()) return QStringLiteral("未识别");
+    const QString lower = value.toLower();
+    if (lower == QStringLiteral("blue")) return QStringLiteral("蓝牌");
+    if (lower == QStringLiteral("yellow")) return QStringLiteral("黄牌");
+    if (lower == QStringLiteral("green")) return QStringLiteral("绿牌（新能源）");
+    if (lower == QStringLiteral("yellow_green") || lower == QStringLiteral("yellowgreen")
+        || lower == QStringLiteral("green_yellow")) {
+        return QStringLiteral("黄绿牌（新能源）");
+    }
+    if (lower == QStringLiteral("white")) return QStringLiteral("白牌");
+    if (lower == QStringLiteral("black")) return QStringLiteral("黑牌");
+    if (lower == QStringLiteral("unknown") || lower == QStringLiteral("none")) {
+        return QStringLiteral("未识别");
+    }
+    return value;
+}
+
+// 通行朝向：板端只有 down/up/unknown（历史脏值里出现过 approaching）。
+QString directionText(const QString& raw)
+{
+    const QString value = raw.trimmed();
+    if (value.isEmpty()) return QStringLiteral("未知");
+    const QString lower = value.toLower();
+    if (lower == QStringLiteral("down")) return QStringLiteral("下行（驶离）");
+    if (lower == QStringLiteral("up")) return QStringLiteral("上行（驶来）");
+    if (lower == QStringLiteral("bidirectional")) return QStringLiteral("双向");
+    if (lower == QStringLiteral("unknown")) return QStringLiteral("未知");
+    if (lower == QStringLiteral("approaching")) return QStringLiteral("接近（历史取值）");
+    return value;
+}
+
+// 测速状态：matched/no_data/disabled/required_missing 都来自板端 radar_match_status。
+QString speedStatusText(const QString& raw)
+{
+    const QString value = raw.trimmed();
+    if (value.isEmpty()) return QStringLiteral("未记录");
+    const QString lower = value.toLower();
+    if (lower == QStringLiteral("matched")) return QStringLiteral("测速已匹配");
+    if (lower == QStringLiteral("required_missing")) return QStringLiteral("缺少必需测速值");
+    if (lower == QStringLiteral("no_data")) return QStringLiteral("无雷达数据");
+    if (lower == QStringLiteral("disabled")) return QStringLiteral("测速已关闭");
+    if (lower == QStringLiteral("synthetic")) return QStringLiteral("模拟数据");
+    if (lower == QStringLiteral("unknown")) return QStringLiteral("未知");
+    return value;
+}
+
+// 板端上报的融合图状态（本地缓存里没有该事件条目时直接显示它）。
+QString evidenceStatusText(const QString& raw)
+{
+    const QString value = raw.trimmed();
+    if (value.isEmpty()) return QStringLiteral("未生成");
+    const QString lower = value.toLower();
+    if (lower == QStringLiteral("generated")) return QStringLiteral("已生成");
+    if (lower == QStringLiteral("not_generated")) return QStringLiteral("未生成");
+    return value;
 }
 
 QString cacheStatusText(rv1126b::EvidenceCacheStatus status)
@@ -106,17 +178,18 @@ QVariant CaptureRecordTableModel::data(const QModelIndex& index, int role) const
                 return QDateTime::fromMSecsSinceEpoch(event.eventTime.epochMs)
                     .toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
             case PlateColumn: return event.plateText.isEmpty() ? QStringLiteral("-") : event.plateText;
-            case PlateColorColumn: return event.plateColor;
+            case PlateColorColumn: return plateColorText(event.plateColor);
             case EventTypeColumn: return ocrText(event);
             case DeviceIdColumn: return event.identity.deviceId;
-            case DirectionColumn: return event.motionDirection;
+            case DirectionColumn: return directionText(event.motionDirection);
             case CoordinateColumn: return QStringLiteral("%1/%2").arg(event.identity.eventId).arg(event.identity.trackId);
-            case RemarkColumn: return event.speedStatus;
+            case RemarkColumn: return speedStatusText(event.speedStatus);
             case SpeedColumn: return event.speedValid ? QStringLiteral("%1 km/h").arg(event.speedKmh) : QStringLiteral("无效");
-            case TimeQualityColumn: return qualityText(event.eventTime.quality.value);
+            case TimeQualityColumn: return qualityText(event.eventTime.quality);
             case EvidenceStatusColumn: {
                 const auto it = evidenceByIdentity_.constFind(event.identity);
-                return it == evidenceByIdentity_.cend() ? event.evidenceStatus : cacheStatusText(it->status);
+                return it == evidenceByIdentity_.cend() ? evidenceStatusText(event.evidenceStatus)
+                                                        : cacheStatusText(it->status);
             }
             default: return {};
             }

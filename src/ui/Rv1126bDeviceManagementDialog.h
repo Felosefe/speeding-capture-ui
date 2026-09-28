@@ -86,7 +86,9 @@ private:
     void refreshIspConfig();
     void saveCurrentIspConfig();
     void clearIspConfig();
-    void applyIspConfigJson(const QJsonObject& config);
+    void applyIspConfigJson(const QJsonObject& config, int action = 0);
+    // applyIspConfigJson 的动作类型：0=刚读取，1=刚保存为开机默认，2=刚取消覆盖。
+    enum { IspRefresh = 0, IspSaveCurrent = 1, IspClear = 2 };
     QString defaultLocalFtpAddress() const;
     QString defaultLocalFtpTargetId(const QString& host) const;
     int localFtpTargetRow() const;

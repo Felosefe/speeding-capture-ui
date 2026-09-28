@@ -24,6 +24,9 @@ public:
 
     void setCurrentDevice(const QString& deviceId);
     void setBoardApiClient(rv1126b::IBoardApiClient* boardApi);
+    // 用持久化的默认码流回填下拉框；不会发出 streamRoleChanged，
+    // 因此调用方需要在设置后自行同步控制器（避免启动时多余的重新连接）。
+    void setStreamRole(rv1126b::RtspStreamRole role);
 
 public slots:
     void setPlaybackState(rv1126b::RtspPlayerState state);
@@ -75,5 +78,6 @@ private:
     bool savingDetection_ = false;
     bool updatingTriggerModeCombo_ = false;
     bool updatingLaneDirectionCombo_ = false;
+    bool updatingStreamCombo_ = false;
 };
 

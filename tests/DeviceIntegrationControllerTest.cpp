@@ -1,4 +1,5 @@
 #include "../src/rv1126b/application/DeviceIntegrationController.h"
+#include "../src/rv1126b/text/Text.h"
 
 #include <QSignalSpy>
 #include <QWidget>
@@ -346,13 +347,15 @@ void DeviceIntegrationControllerTest::onlineSessionOpensSubStreamAndSupportsSwit
 
     fleet.sendSession(snapshot(fleet.lastProfile, DeviceSessionState::Online));
     QCOMPARE(player.openCount, 1);
-    QCOMPARE(player.lastStream.role, RtspStreamRole::Sub);
-    QCOMPARE(player.lastStream.url, QUrl(QStringLiteral("rtsp://192.0.2.10/live/1")));
-
-    controller.setStreamRole(RtspStreamRole::Main);
-    QCOMPARE(player.openCount, 2);
+    // 2026-09-28: 出厂默认改成主码流（现场反馈辅码流画面太糊），
+    // 且路径改为板端实测的两段式 /live/0/0。
     QCOMPARE(player.lastStream.role, RtspStreamRole::Main);
-    QCOMPARE(player.lastStream.url, QUrl(QStringLiteral("rtsp://192.0.2.10/live/0")));
+    QCOMPARE(player.lastStream.url, QUrl(QStringLiteral("rtsp://192.0.2.10/live/0/0")));
+
+    controller.setStreamRole(RtspStreamRole::Sub);
+    QCOMPARE(player.openCount, 2);
+    QCOMPARE(player.lastStream.role, RtspStreamRole::Sub);
+    QCOMPARE(player.lastStream.url, QUrl(QStringLiteral("rtsp://192.0.2.10/live/0/1")));
 }
 
 void DeviceIntegrationControllerTest::degradedHttpDoesNotStopVideoAndRtspFailureDoesNotChangeSession()
@@ -509,7 +512,7 @@ void DeviceIntegrationControllerTest::authenticationFailureStopsVideoAndPromptsO
     for (const QList<QVariant>& arguments : errorSpy) {
         if (arguments.at(0).toString() == QStringLiteral("unauthorized")) {
             ++unauthorizedCount;
-            QCOMPARE(arguments.at(1).toString(), QStringLiteral("认证失败，请重新配置 Token"));
+            QCOMPARE(arguments.at(1).toString(), rv1126b::text::AuthenticationFailed);
             QVERIFY(!arguments.at(1).toString().contains(QStringLiteral("never-log-this")));
         }
     }

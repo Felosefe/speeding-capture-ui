@@ -1,5 +1,6 @@
 #include "DeviceIntegrationController.h"
 #include "../network/DirectDeviceProbeService.h"
+#include "../text/Text.h"
 
 #include <QAbstractSocket>
 #include <QHostAddress>
@@ -183,7 +184,7 @@ bool DeviceIntegrationController::connectDiscoveredDevice(const QString& deviceI
         credentialRef = stored.value();
     } else if (discovered->authRequired && credentialRef.isEmpty()) {
         emit userError(QStringLiteral("token_required"),
-                       QStringLiteral("该设备需要 Bearer Token"));
+                       text::TokenRequired);
         return false;
     }
 
@@ -229,7 +230,7 @@ bool DeviceIntegrationController::connectKnownDevice(
         if (!dependencies_.fleet->upsertDevice(profile)) return false;
     } else if (profile.credentialRef.isEmpty()) {
         emit userError(QStringLiteral("token_required"),
-                       QStringLiteral("该历史设备没有安全 Token，请重新输入"));
+                       text::TokenMissingForKnownDevice);
         return false;
     }
     if (!selectVideoDevice(deviceId)) return false;
@@ -420,8 +421,7 @@ void DeviceIntegrationController::handleSessionChanged(const DeviceSessionSnapsh
     } else if (snapshot.state == DeviceSessionState::AuthenticationFailed) {
         stopPlayback();
         if (previousState != DeviceSessionState::AuthenticationFailed) {
-            emit userError(QStringLiteral("unauthorized"),
-                           QStringLiteral("认证失败，请重新配置 Token"));
+            emit userError(QStringLiteral("unauthorized"), text::AuthenticationFailed);
         }
     } else if (snapshot.state == DeviceSessionState::Disconnected) {
         stopPlayback();
@@ -536,9 +536,13 @@ void DeviceIntegrationController::openSelectedStream()
     QUrl url;
     url.setScheme(QStringLiteral("rtsp"));
     url.setHost(snapshot->profile.endpoint.ipv4);
+    // 板端 RTSP 路径是两段式（<通道>/<码流>）。现场实测可用地址：
+    //   rtsp://192.168.137.73:554/live/0/0   → H.264 2688x1520，29fps
+    // 见板端仓库 docs/05-链路与接口/板端对外通道清单 20260913.md:123。
+    // 之前这里只写 /live/0，即使板端有主码流也拉不到画面。
     url.setPath(streamRole_ == RtspStreamRole::Main
-                    ? QStringLiteral("/live/0")
-                    : QStringLiteral("/live/1"));
+                    ? QStringLiteral("/live/0/0")
+                    : QStringLiteral("/live/0/1"));
 
     RtspStreamSpec stream;
     stream.deviceId = selectedVideoDeviceId_;

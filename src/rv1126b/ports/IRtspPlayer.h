@@ -29,7 +29,8 @@ enum class RtspPlayerState {
 struct RtspStreamSpec {
     QString deviceId;
     QUrl url;
-    RtspStreamRole role = RtspStreamRole::Sub;
+    // 与控制器默认保持一致：主码流。
+    RtspStreamRole role = RtspStreamRole::Main;
     int openTimeoutMs = 15000;
 };
 

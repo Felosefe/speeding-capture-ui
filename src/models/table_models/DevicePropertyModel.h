@@ -21,7 +21,18 @@ public:
 
     void clear();
     void setDevice(const Device* device, const CaptureRecord* latestRecord);
+    // 真机模式下左下角属性表要显示板端"展示配置"（点位名称/道路方向/限速），
+    // 而不是本机 DeviceConfig 里的残留默认值。传入空字符串表示尚未从板端读到。
+    void setBoardSiteInfo(const QString& siteName, const QString& roadDirection, int speedLimitKmh);
 
 private:
+    void rebuildProperties();
+
     QVector<QPair<QString, QString>> properties_;
+    const Device* device_ = nullptr;
+    const CaptureRecord* latestRecord_ = nullptr;
+    bool hasBoardSiteInfo_ = false;
+    QString boardSiteName_;
+    QString boardRoadDirection_;
+    int boardSpeedLimitKmh_ = 0;
 };

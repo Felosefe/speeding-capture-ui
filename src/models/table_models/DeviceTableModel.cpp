@@ -29,6 +29,28 @@ QVariant DeviceTableModel::data(const QModelIndex& index, int role) const
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
         case NameColumn:
+            // 真机模式下左栏只有约 270px 宽，却横向排 7 列，只能看到 2~3 列还要左右拖，
+            // 而这一栏竖着有大片空白。这里改成"一台设备一个竖排卡片"：
+            // 名称 + IP/端口/状态/最后心跳 竖向分行显示，其余字段交给左下角属性表。
+            if (realMode_) {
+                QStringList lines;
+                lines << (device.name.isEmpty() ? device.id : device.name);
+                QStringList detail;
+                if (!device.ipAddress.isEmpty()) {
+                    detail << (device.port > 0
+                                   ? QStringLiteral("%1:%2").arg(device.ipAddress).arg(device.port)
+                                   : device.ipAddress);
+                } else {
+                    detail << QStringLiteral("IP 未获取");
+                }
+                detail << connectionStateText(device.status.connectionState);
+                lines << detail.join(QStringLiteral(" · "));
+                if (device.status.lastHeartbeat.isValid()) {
+                    lines << QStringLiteral("最后心跳 %1").arg(
+                        device.status.lastHeartbeat.toString(QStringLiteral("MM-dd HH:mm:ss")));
+                }
+                return lines.join(QLatin1Char('\n'));
+            }
             return device.name;
         case IpColumn:
             return device.ipAddress;
@@ -80,7 +102,7 @@ QVariant DeviceTableModel::headerData(int section, Qt::Orientation orientation, 
 
     switch (section) {
     case NameColumn:
-        return realMode_ ? QStringLiteral("型号 / 设备") : QStringLiteral("名称");
+        return realMode_ ? QStringLiteral("设备") : QStringLiteral("名称");
     case IpColumn:
         return QStringLiteral("IP");
     case PortColumn:

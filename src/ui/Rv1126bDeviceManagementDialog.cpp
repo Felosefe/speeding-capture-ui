@@ -131,6 +131,46 @@ bool writeTextFile(const QString& path, const QString& text)
 
 } // namespace
 
+// 板端错误码 → 现场能看懂的中文。以前直接显示 error.message，而 codec 只在 HTTP 400 时
+// 保留板端报文，403/405/500 一律变成 "Board request failed with HTTP status 403."，
+// 用户看不到真正原因（配置写入被关掉、ISP 读取失败等）。
+QString boardErrorText(const rv1126b::ApiError& error)
+{
+    const QString code = error.code;
+    if (code == QStringLiteral("config_write_disabled")) {
+        return QStringLiteral("板端已关闭配置写入（APP_API_CONFIG_WRITE_ENABLED=0），请先在板端开启后再试");
+    }
+    if (code == QStringLiteral("isp_config_unavailable")) {
+        return QStringLiteral("板端无法读取图像配置");
+    }
+    if (code == QStringLiteral("isp_current_unavailable")) {
+        return QStringLiteral("板端无法读取当前运行中的图像参数");
+    }
+    if (code == QStringLiteral("isp_config_write_failed")) {
+        return QStringLiteral("板端写入图像配置失败");
+    }
+    if (code == QStringLiteral("config_revision_conflict")) {
+        return QStringLiteral("配置已被他处修改，请先重新读取再保存");
+    }
+    if (code == QStringLiteral("time_set_disabled")) {
+        return QStringLiteral("板端已关闭校时功能");
+    }
+    if (code == QStringLiteral("ftp_config_write_disabled")) {
+        return QStringLiteral("板端已关闭 FTP 配置写入");
+    }
+    if (code == QStringLiteral("ftp_task_write_disabled")) {
+        return QStringLiteral("板端已关闭 FTP 任务创建");
+    }
+    const QString message = error.message;
+    if (code.isEmpty()) {
+        return message.isEmpty() ? QStringLiteral("未知错误") : message;
+    }
+    if (message.isEmpty()) {
+        return QStringLiteral("板端返回错误（%1）").arg(code);
+    }
+    return QStringLiteral("%1（%2）").arg(message, code);
+}
+
 Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     const QString& deviceId,
     rv1126b::DeviceOperationsController* controller,
@@ -523,8 +563,10 @@ QWidget* Rv1126bDeviceManagementDialog::createIspPage()
     layout->addWidget(box);
 
     auto* hint = new QLabel(QStringLiteral(
-        "这里不会直接调曝光。先在网页端或调试工具里把画面调到满意，再点“保存当前为开机默认”。"
-        "保存后，断电重启或生产服务重启会自动恢复这组曝光、增益、亮度/对比度、HLC/BLC/HDR/WDR 参数。"), page);
+        "这一页只是把相机当前运行中的图像参数记下来当「开机默认」，本身不会去调曝光。"
+        "要改画面请先在相机网页端或调试工具里调好，再回到这里点「保存当前为开机默认」。"
+        "保存是写在板端配置里的，要重启相机服务或断电重启才会套用——重启前画面不会变。"
+        "板端若关闭了配置写入，保存按钮会是灰的。"), page);
     hint->setWordWrap(true);
     hint->setStyleSheet(QStringLiteral("color:#44515f;"));
     layout->addWidget(hint);
@@ -533,6 +575,7 @@ QWidget* Rv1126bDeviceManagementDialog::createIspPage()
     ispRefreshButton_ = new QPushButton(QStringLiteral("重新读取"), page);
     ispSaveCurrentButton_ = new QPushButton(QStringLiteral("保存当前为开机默认"), page);
     ispClearButton_ = new QPushButton(QStringLiteral("取消开机默认覆盖"), page);
+    ispClearButton_->setToolTip(QStringLiteral("取消后开机不再套用这组参数；已写入板端配置的当前值不会被还原"));
     row->addWidget(ispRefreshButton_);
     row->addWidget(ispSaveCurrentButton_);
     row->addWidget(ispClearButton_);
@@ -1668,10 +1711,10 @@ void Rv1126bDeviceManagementDialog::refreshIspConfig()
     if (ispStatus_) ispStatus_->setText(QStringLiteral("正在读取图像参数..."));
     boardApi_->getIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
         if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("读取失败：%1").arg(result.error().message));
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("读取失败：%1").arg(boardErrorText(result.error())));
             return;
         }
-        applyIspConfigJson(result.value());
+        applyIspConfigJson(result.value(), IspRefresh);
     });
 }
 
@@ -1679,17 +1722,16 @@ void Rv1126bDeviceManagementDialog::saveCurrentIspConfig()
 {
     if (!boardApi_) return;
     if (QMessageBox::question(this, QStringLiteral("保存当前图像参数"),
-                              QStringLiteral("确认把板端当前运行中的曝光/增益/图像参数保存为开机默认？\n"
-                                             "以后生产服务启动时会自动恢复这组参数。"))
+                              QStringLiteral("确认把相机当前运行中的曝光/增益/图像参数保存为开机默认？\n"
+                                             "写入后要重启相机服务（或断电重启）才会套用，重启前画面不会立刻变化。"))
         != QMessageBox::Yes) return;
     if (ispStatus_) ispStatus_->setText(QStringLiteral("正在保存当前图像参数..."));
     boardApi_->saveCurrentIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
         if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("保存失败：%1").arg(result.error().message));
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("保存失败：%1").arg(boardErrorText(result.error())));
             return;
         }
-        applyIspConfigJson(result.value());
-        if (ispStatus_) ispStatus_->setText(QStringLiteral("已保存当前图像参数为开机默认"));
+        applyIspConfigJson(result.value(), IspSaveCurrent);
     });
 }
 
@@ -1697,59 +1739,136 @@ void Rv1126bDeviceManagementDialog::clearIspConfig()
 {
     if (!boardApi_) return;
     if (QMessageBox::question(this, QStringLiteral("取消开机默认覆盖"),
-                              QStringLiteral("确认取消我们生产配置对 ISP 图像参数的开机覆盖？\n"
-                                             "取消后，板端会回到原厂 rkipc 启动配置。"))
+                              QStringLiteral("确认取消本软件对图像参数的开机覆盖？\n"
+                                             "取消后开机不再套用这组参数；"
+                                             "已经写进板端配置文件的当前值不会被还原成出厂默认。"))
         != QMessageBox::Yes) return;
     if (ispStatus_) ispStatus_->setText(QStringLiteral("正在取消开机默认覆盖..."));
     boardApi_->clearIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
         if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("取消失败：%1").arg(result.error().message));
+            if (ispStatus_) ispStatus_->setText(QStringLiteral("取消失败：%1").arg(boardErrorText(result.error())));
             return;
         }
-        applyIspConfigJson(result.value());
-        if (ispStatus_) ispStatus_->setText(QStringLiteral("已取消开机默认覆盖"));
+        applyIspConfigJson(result.value(), IspClear);
     });
 }
 
-void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config)
+void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config, int action)
 {
-    auto summary = [](const QJsonObject& object) {
-        const QString enabled = object.value(QStringLiteral("enabled")).toBool()
-            ? QStringLiteral("启用")
-            : QStringLiteral("未启用");
-        return QStringLiteral("%1；曝光=%2 %3；增益=%4 %5；亮度=%6；对比度=%7；HLC=%8/%9；BLC=%10/%11；HDR=%12/%13；WDR=%14/%15")
-            .arg(enabled,
-                 object.value(QStringLiteral("exposure_mode")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("exposure_time")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("gain_mode")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("exposure_gain")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("brightness")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("contrast")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("hlc")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("hlc_level")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("blc_region")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("blc_strength")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("hdr")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("hdr_level")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("wdr")).toString(QStringLiteral("-")),
-                 object.value(QStringLiteral("wdr_level")).toString(QStringLiteral("-")));
+    // 板端返回的是 close/open/auto 这类英文枚举，这里统一翻成现场看得懂的中文。
+    const auto onOff = [](const QString& value) {
+        if (value.compare(QStringLiteral("close"), Qt::CaseInsensitive) == 0
+            || value.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0
+            || value.compare(QStringLiteral("off"), Qt::CaseInsensitive) == 0
+            || value == QStringLiteral("0")) {
+            return QStringLiteral("关");
+        }
+        if (value.compare(QStringLiteral("open"), Qt::CaseInsensitive) == 0
+            || value.compare(QStringLiteral("on"), Qt::CaseInsensitive) == 0) {
+            return QStringLiteral("开");
+        }
+        return value.isEmpty() ? QStringLiteral("未读取") : value;
+    };
+    const auto modeText = [](const QString& value) {
+        if (value.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0) {
+            return QStringLiteral("自动");
+        }
+        if (value.compare(QStringLiteral("manual"), Qt::CaseInsensitive) == 0) {
+            return QStringLiteral("手动");
+        }
+        return value.isEmpty() ? QStringLiteral("未读取") : value;
+    };
+    const auto levelText = [&onOff](const QString& state, const QString& level) {
+        if (state.isEmpty() && level.isEmpty()) {
+            return QStringLiteral("未读取");
+        }
+        if (state.compare(QStringLiteral("close"), Qt::CaseInsensitive) == 0) {
+            return QStringLiteral("关");
+        }
+        return QStringLiteral("%1（档位 %2）").arg(onOff(state),
+                                                 level.isEmpty() ? QStringLiteral("-") : level);
+    };
+    const auto textOrUnread = [](const QJsonObject& object, const char* key) {
+        const QString value = object.value(QLatin1String(key)).toString();
+        return value.isEmpty() ? QStringLiteral("未读取") : value;
+    };
+
+    const auto summary = [&](const QJsonObject& object, bool includeEnabled) {
+        QString text = QStringLiteral("快门：%1（%2）；增益：%3（%4）；亮度：%5；对比度：%6；"
+                                      "强光抑制：%7；背光补偿：%8；高动态 HDR：%9；宽动态 WDR：%10")
+                           .arg(textOrUnread(object, "exposure_time"),
+                                modeText(object.value(QStringLiteral("exposure_mode")).toString()),
+                                textOrUnread(object, "exposure_gain"),
+                                modeText(object.value(QStringLiteral("gain_mode")).toString()),
+                                textOrUnread(object, "brightness"),
+                                textOrUnread(object, "contrast"),
+                                levelText(object.value(QStringLiteral("hlc")).toString(),
+                                          object.value(QStringLiteral("hlc_level")).toString()),
+                                levelText(object.value(QStringLiteral("blc_region")).toString(),
+                                          object.value(QStringLiteral("blc_strength")).toString()),
+                                levelText(object.value(QStringLiteral("hdr")).toString(),
+                                          object.value(QStringLiteral("hdr_level")).toString()),
+                                levelText(object.value(QStringLiteral("wdr")).toString(),
+                                          object.value(QStringLiteral("wdr_level")).toString()));
+        if (includeEnabled) {
+            text.prepend(QStringLiteral("开机套用：%1；")
+                             .arg(object.value(QStringLiteral("enabled")).toBool()
+                                      ? QStringLiteral("开")
+                                      : QStringLiteral("关")));
+        }
+        return text;
     };
 
     QJsonObject current = config.value(QStringLiteral("current_live")).toObject();
+    const bool liveAvailable = config.value(QStringLiteral("live_available")).toBool(true);
+    const QString sourceRaw = config.value(QStringLiteral("current_source")).toString();
+    QString sourceText = QStringLiteral("未知来源");
+    if (sourceRaw == QStringLiteral("vendor_cgi")) {
+        sourceText = QStringLiteral("实时值（直接读自相机）");
+    } else if (sourceRaw == QStringLiteral("rkipc_ini")) {
+        sourceText = QStringLiteral("配置文件值（rkipc 启动时读取，不是实时值）");
+    }
     if (current.isEmpty()) current = config.value(QStringLiteral("current")).toObject();
     if (current.isEmpty()) current = config.value(QStringLiteral("current_ini")).toObject();
     const QJsonObject persisted = config.value(QStringLiteral("persisted")).toObject();
-    if (ispCurrentLabel_) ispCurrentLabel_->setText(summary(current));
-    if (ispPersistedLabel_) ispPersistedLabel_->setText(summary(persisted));
-    if (ispStatus_) {
-        const QString revision = config.value(QStringLiteral("revision")).toString(QStringLiteral("-"));
-        const QString source = config.value(QStringLiteral("current_source")).toString(QStringLiteral("unknown"));
-        const bool restartRequired = config.value(QStringLiteral("restart_required")).toBool();
-        ispStatus_->setText(QStringLiteral("revision=%1；当前值来源=%2；%3")
-            .arg(revision, source,
-                 restartRequired ? QStringLiteral("需要重启生产服务后完全生效")
-                                 : QStringLiteral("当前运行值与持久化状态一致")));
+    // "当前运行"一行不显示开机套用开关：板端实时读取路径里它恒为 true，显示只会误导。
+    if (ispCurrentLabel_) ispCurrentLabel_->setText(summary(current, false));
+    if (ispPersistedLabel_) ispPersistedLabel_->setText(summary(persisted, true));
+
+    // 板端关闭配置写入时，保存/取消必然 403，按钮直接置灰。
+    const bool writeEnabled = config.value(QStringLiteral("write_enabled")).toBool(true);
+    if (ispSaveCurrentButton_) ispSaveCurrentButton_->setEnabled(writeEnabled);
+    if (ispClearButton_) ispClearButton_->setEnabled(writeEnabled);
+    if (ispSaveCurrentButton_) {
+        ispSaveCurrentButton_->setToolTip(writeEnabled
+            ? QString()
+            : QStringLiteral("板端已关闭配置写入，无法保存"));
     }
+
+    if (!ispStatus_) {
+        return;
+    }
+    QStringList lines;
+    if (action == IspSaveCurrent) {
+        lines << QStringLiteral("已把这组参数保存为开机默认");
+    } else if (action == IspClear) {
+        lines << QStringLiteral("已取消开机默认覆盖（开机不再套用这组参数）");
+    }
+    if (!writeEnabled) {
+        lines << QStringLiteral("板端已关闭配置写入，保存/取消按钮不可用");
+    }
+    lines << QStringLiteral("配置版本：%1")
+                 .arg(config.value(QStringLiteral("revision")).toString(QStringLiteral("未读取")));
+    lines << QStringLiteral("数值来源：%1").arg(sourceText);
+    if (!liveAvailable) {
+        const QString liveError = config.value(QStringLiteral("live_error")).toString();
+        lines << QStringLiteral("实时值读取失败，上面「当前运行」显示的是配置文件里的值%1")
+                     .arg(liveError.isEmpty() ? QString() : QStringLiteral("（%1）").arg(liveError));
+    }
+    lines << (config.value(QStringLiteral("restart_required")).toBool()
+                  ? QStringLiteral("已在板端落盘，重启相机服务或断电重启后生效（本次重启前画面不变）")
+                  : QStringLiteral("板端已保存的值与本次读取一致，无需重启"));
+    ispStatus_->setText(lines.join(QStringLiteral("；")));
 }
 
 QString Rv1126bDeviceManagementDialog::defaultLocalFtpAddress() const

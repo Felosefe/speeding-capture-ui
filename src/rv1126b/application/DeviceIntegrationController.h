@@ -94,7 +94,9 @@ private:
     RequestId activeProbeId_;
     QString selectedVideoDeviceId_;
     QString playbackDeviceId_;
-    RtspStreamRole streamRole_ = RtspStreamRole::Sub;
+    // 出厂默认主码流：这台板子的辅码流（enable_venc_1）在 mainpath 检测模式下是关闭的，
+    // 拉 /live/1 会连上但收不到任何数据。用户在预览页切换后会被持久化覆盖。
+    RtspStreamRole streamRole_ = RtspStreamRole::Main;
     bool scanning_ = false;
     bool shutdown_ = false;
     bool playbackSuspended_ = false;
