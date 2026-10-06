@@ -28,19 +28,41 @@ int main(int argc, char* argv[])
     QCommandLineOption mockOption(QStringLiteral("mock"),
                                   QStringLiteral("启用旧模拟设备开发模式"));
     parser.addOption(mockOption);
+    /*
+     * P1: 开机自启时带这个参数 —— 启动后直接驻留托盘、开始同步，不弹窗口。
+     */
+    QCommandLineOption minimizedOption(QStringLiteral("minimized"),
+                                       QStringLiteral("启动后最小化到系统托盘（后台同步事件）"));
+    parser.addOption(minimizedOption);
     parser.process(app);
 
     const bool mockMode = parser.isSet(mockOption);
+    const bool startMinimized = parser.isSet(minimizedOption);
+
+    /*
+     * P1: 事件同步跑在这个进程里，关掉窗口不应该把同步一起关掉。
+     * 关窗口的行为由 MainWindow::closeEvent 决定（有托盘就只隐藏），所以这里
+     * 不能让"最后一个窗口关闭"自动退出进程；真正退出走托盘菜单，或
+     * closeEvent 里那条显式 quit 的路径。
+     */
+    QApplication::setQuitOnLastWindowClosed(false);
+
+    const auto presentWindow = [startMinimized](MainWindow* window) {
+        window->setAttribute(Qt::WA_DeleteOnClose);
+        window->setStartMinimized(startMinimized);
+        if (!startMinimized) {
+            window->show();
+        }
+    };
+
     if (mockMode) {
         MainWindowDependencies dependencies;
         dependencies.mockMode = true;
-        auto* window = new MainWindow(dependencies);
-        window->setAttribute(Qt::WA_DeleteOnClose);
-        window->show();
+        presentWindow(new MainWindow(dependencies));
     } else {
         SystemSettingsService settingsService;
         auto* runtime = new rv1126b::Rv1126bApplicationRuntime(settingsService.load(), &app);
-        runtime->initialize(&app, [runtime, &app](rv1126b::ApiResult<void> result) {
+        runtime->initialize(&app, [runtime, &app, presentWindow](rv1126b::ApiResult<void> result) {
             if (!result) {
                 QMessageBox::critical(nullptr, QStringLiteral("RV1126B 初始化失败"),
                                       QStringLiteral("无法初始化设备数据库或生产服务：%1")
@@ -48,9 +70,7 @@ int main(int argc, char* argv[])
                 QMetaObject::invokeMethod(&app, &QCoreApplication::quit, Qt::QueuedConnection);
                 return;
             }
-            auto* window = new MainWindow(runtime->mainWindowDependencies());
-            window->setAttribute(Qt::WA_DeleteOnClose);
-            window->show();
+            presentWindow(new MainWindow(runtime->mainWindowDependencies()));
         });
     }
 

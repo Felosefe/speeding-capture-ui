@@ -24,6 +24,7 @@ class QMenu;
 class QPoint;
 class QSortFilterProxyModel;
 class QSpinBox;
+class QSystemTrayIcon;
 class QTableView;
 class QTabWidget;
 class QTimer;
@@ -76,6 +77,10 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     explicit MainWindow(MainWindowDependencies dependencies, QWidget* parent = nullptr);
     void attachEventSyncService(rv1126b::EventSyncService* service);
+    /*
+     * P1: 自启时不弹窗口，直接驻留托盘。由 main.cpp 在 show() 之前调用。
+     */
+    void setStartMinimized(bool startMinimized);
 
 protected:
     void changeEvent(QEvent* event) override;
@@ -115,6 +120,9 @@ private slots:
     void changeEventViewMode();
     void previousHistoryPage();
     void nextHistoryPage();
+    /* P1: 托盘菜单 */
+    void showMainWindowFromTray();
+    void quitFromTray();
 
 private:
     void createActions();
@@ -135,6 +143,9 @@ private:
     void runScheduledShutdown();
     void updateStartupRegistration(bool enabled);
     void updatePreviewLayout();
+    /* P1: 托盘常驻，让事件同步不再依赖窗口开着 */
+    void setupTrayIcon();
+    void shutdownPipeline();
 
     int currentDeviceRow() const;
     int currentCaptureRow() const;
@@ -225,4 +236,16 @@ private:
     int lastHistoryRowCount_ = 0;
     bool mockMode_ = false;
     bool shutdownStarted_ = false;
+    /*
+     * P1 (2026-10-07): 事件同步是后台任务，因为“关窗口 = 退出 = 停止同步”，
+     * 关掉窗口后板端事件就不再落到电脑上。有系统托盘时关窗口只隐藏窗口，
+     * 同步继续；真正退出走托盘菜单的“退出”（置 quitRequested_ 后关闭）。
+     * 没有托盘的环境（托盘不可用）保持原来的“关窗口即退出”行为。
+     */
+    QSystemTrayIcon* trayIcon_ = nullptr;
+    QAction* trayShowAction_ = nullptr;
+    QAction* trayQuitAction_ = nullptr;
+    bool quitRequested_ = false;
+    bool trayHintShown_ = false;
+    bool startMinimized_ = false;
 };
