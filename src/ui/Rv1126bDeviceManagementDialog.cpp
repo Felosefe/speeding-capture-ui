@@ -1551,6 +1551,11 @@ void Rv1126bDeviceManagementDialog::startEventExport()
     startNextEventExportTarget();
 }
 
+/*
+ * 2026-10-07：已导出事件的集合（eventId:trackId），从 index.csv 载入。
+ * 对话框是单实例，用文件级静态即可，避免为这个改动去动头文件。
+ */
+static QSet<QString> s_exportDoneKeys;
 void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
 {
     if (!exportInFlight_) return;
@@ -1600,6 +1605,30 @@ void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
             .filePath(runName));
     exportRunRoot_ = exportTargetRoot_;
     QDir().mkpath(exportRunRoot_);
+    /*
+     * 2026-10-07 事件级跳过：index.csv 每次导出都会追加"已导出事件的目录路径"，
+     * 这里把其中的 event<ID>_track<ID> 读回来。已在集合里的事件，下面的
+     * exportNextEvent() 会整条跳过 —— 连 getEventDetail 请求都不发。
+     *
+     * 上一版我只跳过了"下载文件"，但每条事件仍要一次 HTTP 往返才能算出目录名，
+     * 所以点第二次还是把 951 条走一遍 —— 那是个错误的层级，这次改对了。
+     */
+    s_exportDoneKeys.clear();
+    {
+        QFile indexFile(QDir(exportRunRoot_).filePath(QStringLiteral("index.csv")));
+        if (indexFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream stream(&indexFile);
+            stream.setEncoding(QStringConverter::Utf8);
+            const QRegularExpression doneKeyRe(QStringLiteral("_event(\\d+)_track(\\d+)"));
+            while (!stream.atEnd()) {
+                const QRegularExpressionMatch match = doneKeyRe.match(stream.readLine());
+                if (match.hasMatch()) {
+                    s_exportDoneKeys.insert(match.captured(1) + QLatin1Char(':') + match.captured(2));
+                }
+            }
+        }
+    }
+
     writeTextFile(QDir(exportRunRoot_).filePath(QStringLiteral("index.csv")),
                   QStringLiteral("device_id,host,event_id,track_id,event_time,plate,ocr_status,speed_kmh,direction,folder\n"));
 
@@ -1653,6 +1682,7 @@ void Rv1126bDeviceManagementDialog::handleEventExportPage(rv1126b::ApiResult<rv1
     exportNextEvent();
 }
 
+
 void Rv1126bDeviceManagementDialog::exportNextEvent()
 {
     if (!exportInFlight_ || !currentExportApi_) return;
@@ -1660,6 +1690,25 @@ void Rv1126bDeviceManagementDialog::exportNextEvent()
         finishEventExport();
         return;
     }
+    /*
+     * 2026-10-07：已经导出过的事件整条跳过 —— 不发 getEventDetail、不下载任何文件，
+     * 所以"已经拉过一次"的第二次点击是瞬间完成。
+     */
+    while (exportEventIndex_ < exportEvents_.size()) {
+        const rv1126b::EventSummaryDto candidate = exportEvents_.at(exportEventIndex_);
+        const QString doneKey = QString::number(candidate.eventId)
+            + QLatin1Char(':') + QString::number(candidate.trackId);
+        if (!s_exportDoneKeys.contains(doneKey)) {
+            break;
+        }
+        ++exportSucceeded_;
+        ++exportEventIndex_;
+    }
+    if (exportEventIndex_ >= exportEvents_.size()) {
+        finishEventExport();
+        return;
+    }
+
     const rv1126b::EventSummaryDto summary = exportEvents_.at(exportEventIndex_);
     rv1126b::EventIdentity identity;
     identity.deviceId = exportTargetDeviceId_;
