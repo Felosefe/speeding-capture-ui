@@ -425,7 +425,22 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     boardPullStatus_ = new QLabel(QStringLiteral("尚未开始"), pullRow);
     boardPullStatus_->setObjectName(QStringLiteral("boardDataPullStatusLabel"));
     boardPullStatus_->setWordWrap(true);
+    /*
+     * 拉取的时间范围（2026-10-07）。默认“全部”，保持原有行为不变。范围由
+     * BoardDataPullService 在翻页时按 source_epoch_ms 判断：板端按时间降序返回，
+     * 翻到第一条更早的即停；范围外的事件既不落库、也不写资料包。
+     */
+    boardPullRangeCombo_ = new QComboBox(pullRow);
+    boardPullRangeCombo_->setObjectName(QStringLiteral("boardDataPullRangeCombo"));
+    boardPullRangeCombo_->addItem(QStringLiteral("今天"));
+    boardPullRangeCombo_->addItem(QStringLiteral("最近一周"));
+    boardPullRangeCombo_->addItem(QStringLiteral("最近一月"));
+    boardPullRangeCombo_->addItem(QStringLiteral("全部"));
+    boardPullRangeCombo_->setCurrentIndex(3);
+    boardPullRangeCombo_->setToolTip(
+        QStringLiteral("只拉取该时间范围内的检测记录；“全部”= 板端保留的所有事件。"));
     pullRowLayout->addWidget(boardPullButton_);
+    pullRowLayout->addWidget(boardPullRangeCombo_);
     pullRowLayout->addWidget(boardPullStatus_, 1);
     pullLayout->addWidget(pullRow);
 
@@ -1933,19 +1948,47 @@ void Rv1126bDeviceManagementDialog::startBoardDataPull()
     if (!boardPullService_ || !boardApi_ || boardPullService_->isRunning()) {
         return;
     }
+    /*
+     * 时间范围（2026-10-07）：0..3 => 今天 / 最近一周 / 最近一月 / 全部。
+     * “今天”从本地当天 00:00 起算；一周/一月从当前时刻往前推；全部 = 不设下界。
+     */
+    qint64 cutoffEpochMs = 0;
+    QString rangeLabel = QStringLiteral("全部");
+    switch (boardPullRangeCombo_ ? boardPullRangeCombo_->currentIndex() : 3) {
+    case 0: {
+        const QDateTime startOfToday(QDate::currentDate(), QTime(0, 0));
+        cutoffEpochMs = startOfToday.toMSecsSinceEpoch();
+        rangeLabel = QStringLiteral("今天");
+        break;
+    }
+    case 1:
+        cutoffEpochMs = QDateTime::currentDateTime().toMSecsSinceEpoch() - 7LL * 86400000LL;
+        rangeLabel = QStringLiteral("最近一周");
+        break;
+    case 2:
+        cutoffEpochMs = QDateTime::currentDateTime().toMSecsSinceEpoch() - 30LL * 86400000LL;
+        rangeLabel = QStringLiteral("最近一月");
+        break;
+    case 3:
+    default:
+        cutoffEpochMs = 0;
+        rangeLabel = QStringLiteral("全部");
+        break;
+    }
+
     if (QMessageBox::question(
             this, QStringLiteral("拉取板端数据"),
             QStringLiteral("确认把这台相机上已有的检测记录拉回本机？\n"
-                           "范围：板端保留的全部事件（最多 5000 条）。\n"
-                           "目标文件夹：%1\n"
+                           "范围：%1（最多 5000 条）。\n"
+                           "目标文件夹：%2\n"
                            "已存在的同类文件会被覆盖，目录结构不会动。")
-                .arg(boardPullStatus_ ? boardPullStatus_->text() : QString()))
+                .arg(rangeLabel, boardPullStatus_ ? boardPullStatus_->text() : QString()))
         != QMessageBox::Yes) {
         return;
     }
     boardPullButton_->setText(QStringLiteral("停止拉取"));
-    boardPullStatus_->setText(QStringLiteral("正在读取板端事件列表..."));
-    boardPullService_->start(boardApi_, deviceId_, 5000);
+    boardPullStatus_->setText(QStringLiteral("正在读取板端事件列表（范围：%1）...").arg(rangeLabel));
+    boardPullService_->start(boardApi_, deviceId_, 5000, cutoffEpochMs);
 }
 
 void Rv1126bDeviceManagementDialog::cancelBoardDataPull()

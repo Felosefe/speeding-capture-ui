@@ -174,6 +174,8 @@ private:
     QPushButton* eventSyncAllButton_ = nullptr;
     QPushButton* eventSyncFromNowButton_ = nullptr;
     QPushButton* boardPullButton_ = nullptr;
+    /* 拉取的时间范围（2026-10-07）：今天 / 最近一周 / 最近一月 / 全部 */
+    QComboBox* boardPullRangeCombo_ = nullptr;
     QLabel* boardPullStatus_ = nullptr;
     rv1126b::BoardDataPullService* boardPullService_ = nullptr;
     rv1126b::DetectionResultWriter* detectionWriter_ = nullptr;

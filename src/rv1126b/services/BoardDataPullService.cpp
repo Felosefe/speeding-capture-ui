@@ -43,7 +43,8 @@ BoardDataPullService::BoardDataPullService(IEventRepository* repository,
 {
 }
 
-void BoardDataPullService::start(IBoardApiClient* apiClient, const QString& deviceId, int limit)
+void BoardDataPullService::start(IBoardApiClient* apiClient, const QString& deviceId, int limit,
+                                qint64 cutoffEpochMs)
 {
     if (running_ || !repository_ || !writer_ || !apiClient || deviceId.trimmed().isEmpty()) {
         return;
@@ -51,6 +52,8 @@ void BoardDataPullService::start(IBoardApiClient* apiClient, const QString& devi
     apiClient_ = apiClient;
     deviceId_ = deviceId;
     limit_ = limit > 0 ? limit : 5000;
+    // 每次拉取都重置时间下界，避免上一次的范围影响这一次。
+    cutoffEpochMs_ = cutoffEpochMs > 0 ? cutoffEpochMs : 0;
     cursor_.clear();
     hasCursor_ = false;
     seenCount_ = 0;
@@ -110,12 +113,23 @@ void BoardDataPullService::handlePage(ApiResult<EventPageDto> result)
     const EventPageDto page = result.value();
     QVector<VehicleEvent> batch;
     batch.reserve(page.items.size());
+    bool reachedCutoff = false;
     for (const EventSummaryDto& item : page.items) {
+        /*
+         * 时间范围（2026-10-07）：板端按时间降序返回，所以遇到第一条早于截止时间的
+         * 事件就结束本次拉取。判断放在入队之前——范围外的事件既不落库、也不写资料包。
+         */
+        if (cutoffEpochMs_ > 0 && item.eventTime.sourceEpochMs < cutoffEpochMs_) {
+            reachedCutoff = true;
+            break;
+        }
         batch.append(eventFromSummary(deviceId_, item));
         pending_.append(EventIdentity{deviceId_, item.eventId, item.trackId});
     }
-    seenCount_ += page.items.size();
-    const bool hasMore = page.hasMore && page.nextCursor.has_value() && seenCount_ < limit_;
+    /* 用 batch.size() 而不是 page.items.size()：被范围挡掉的不算"已拉取"。 */
+    seenCount_ += batch.size();
+    const bool hasMore = page.hasMore && page.nextCursor.has_value() && seenCount_ < limit_ &&
+                         !reachedCutoff;
     const QString nextCursor = page.nextCursor.value_or(QString());
     emit progress(seenCount_, writtenCount_, failedCount_);
 

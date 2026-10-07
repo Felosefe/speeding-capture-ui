@@ -37,7 +37,10 @@ public:
     bool isRunning() const { return running_; }
     // apiClient 由调用方按设备解析后传入（应用里是 boardApiForDevice(deviceId)）。
     // limit 是本次最多拉多少条，避免误点一下把板端翻个底朝天。
-    void start(IBoardApiClient* apiClient, const QString& deviceId, int limit = 5000);
+    // cutoffEpochMs 是时间范围（2026-10-07 加）：只拉 source_epoch_ms >= 它的数据，
+    // 0 = 不限时间（全部）。板端按时间降序返回，所以翻到第一条更早的即可停。
+    void start(IBoardApiClient* apiClient, const QString& deviceId, int limit = 5000,
+               qint64 cutoffEpochMs = 0);
     void cancel();
 
     int seenCount() const { return seenCount_; }
@@ -62,6 +65,8 @@ private:
     QString cursor_;
     bool hasCursor_ = false;
     int limit_ = 5000;
+    // 本次拉取的时间下界（source epoch ms），0 = 不限。
+    qint64 cutoffEpochMs_ = 0;
     int seenCount_ = 0;
     int writtenCount_ = 0;
     int failedCount_ = 0;

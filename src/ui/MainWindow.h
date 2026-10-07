@@ -25,6 +25,7 @@ class QMenu;
 class QPoint;
 class QSortFilterProxyModel;
 class QSpinBox;
+class QSystemTrayIcon;
 class QTableView;
 class QTabWidget;
 class QTimer;
@@ -80,6 +81,10 @@ public:
     explicit MainWindow(QWidget* parent = nullptr);
     explicit MainWindow(MainWindowDependencies dependencies, QWidget* parent = nullptr);
     void attachEventSyncService(rv1126b::EventSyncService* service);
+    /*
+     * P1: 开机自启时不弹窗口，直接驻留托盘。由 main.cpp 在 show() 之前调用。
+     */
+    void setStartMinimized(bool startMinimized);
 
 protected:
     void changeEvent(QEvent* event) override;
@@ -244,4 +249,20 @@ private:
     int lastHistoryRowCount_ = 0;
     bool mockMode_ = false;
     bool shutdownStarted_ = false;
+
+    /*
+     * P1 (2026-10-07): 事件同步是后台任务，而原先 closeEvent 直接关服务 ——
+     * “关掉窗口”就等于“电脑不再同步板端事件”。有系统托盘时关窗口只隐藏窗口，
+     * 同步继续；真正退出走托盘菜单的“退出”（置 quitRequested_ 后再关）。
+     * 托盘不可用的环境保持原来的“关窗口即退出”行为。
+     */
+    QSystemTrayIcon* trayIcon_ = nullptr;
+    bool quitRequested_ = false;
+    bool trayHintShown_ = false;
+    bool startMinimized_ = false;
+
+    void setupTrayIcon();
+    void shutdownPipeline();
+    void showMainWindowFromTray();
+    void quitFromTray();
 };

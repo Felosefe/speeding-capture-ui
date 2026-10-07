@@ -48,6 +48,7 @@
 #include <QStatusBar>
 #include <QStorageInfo>
 #include <QStyle>
+#include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTableView>
 #include <QTimer>
@@ -203,27 +204,136 @@ void MainWindow::changeEvent(QEvent *event)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (!shutdownStarted_)
+    /*
+     * P1 (2026-10-07): 关窗口不再等于退出。
+     *
+     * 事件同步（1 Hz 增量拉板端事件）跑在这个进程里，原先 closeEvent 直接 shutdown
+     * 控制器 —— 所以"把窗口关掉"就等于"电脑不再同步板端事件"，这是数据到不了电脑的
+     * 一半原因。
+     *
+     * 有系统托盘时：关窗口只隐藏窗口，同步继续；要退出用托盘菜单的"退出"，它会置
+     * quitRequested_ 后再走真正的收尾。托盘不可用的环境保持原来的行为，不做静默改变。
+     */
+    if (!quitRequested_ && trayIcon_ && trayIcon_->isVisible())
     {
-        shutdownStarted_ = true;
-        if (eventController_)
+        event->ignore();
+        hide();
+        if (!trayHintShown_)
         {
-            eventController_->shutdown();
+            trayHintShown_ = true;
+            trayIcon_->showMessage(
+                QStringLiteral("仍在后台同步"),
+                QStringLiteral("窗口已最小化到托盘，板端事件同步继续运行。\n"
+                               "要退出请右键托盘图标选择“退出”。"),
+                QSystemTrayIcon::Information, 6000);
         }
-        if (operationsController_)
-        {
-            operationsController_->shutdown();
-        }
-        if (integrationController_)
-        {
-            integrationController_->shutdown();
-        }
-        if (mockMode_)
-        {
-            deviceManager_->disconnectAllDevices();
-        }
+        return;
     }
+
+    shutdownPipeline();
     QMainWindow::closeEvent(event);
+    /*
+     * 真正退出这条路径要显式 quit：main.cpp 里设了 setQuitOnLastWindowClosed(false)
+     * （为了隐藏到托盘时程序不退出），所以这里必须自己收尾，否则托盘不可用的环境会
+     * 留下一个没有窗口的僵尸进程。
+     */
+    qApp->quit();
+}
+
+void MainWindow::shutdownPipeline()
+{
+    if (shutdownStarted_)
+    {
+        return;
+    }
+    shutdownStarted_ = true;
+    if (eventController_)
+    {
+        eventController_->shutdown();
+    }
+    if (operationsController_)
+    {
+        operationsController_->shutdown();
+    }
+    if (integrationController_)
+    {
+        integrationController_->shutdown();
+    }
+    if (mockMode_)
+    {
+        deviceManager_->disconnectAllDevices();
+    }
+}
+
+void MainWindow::setStartMinimized(bool startMinimized)
+{
+    startMinimized_ = startMinimized;
+    /*
+     * 托盘搭在这里创建：main.cpp 在 show() 之前对两个分支都会调用本函数（含 false），
+     * 所以不必再改构造函数 —— 也就不会碰到构造函数尾部那段带中文的代码。
+     */
+    setupTrayIcon();
+}
+
+void MainWindow::setupTrayIcon()
+{
+    if (trayIcon_)
+    {
+        return;
+    }
+    if (!QSystemTrayIcon::isSystemTrayAvailable())
+    {
+        return;
+    }
+
+    /* 图标用系统标准图标，不引入新的资源文件；以后要品牌图标再换 QIcon 资源。 */
+    trayIcon_ = new QSystemTrayIcon(style()->standardIcon(QStyle::SP_ComputerIcon), this);
+    trayIcon_->setToolTip(QStringLiteral("RV1126B 车牌识别测速摄像机 — 事件同步"));
+
+    auto *trayMenu = new QMenu(this);
+    QAction *showAction = trayMenu->addAction(QStringLiteral("显示主窗口"));
+    trayMenu->addSeparator();
+    QAction *quitAction = trayMenu->addAction(QStringLiteral("退出"));
+    connect(showAction, &QAction::triggered, this, [this]() { showMainWindowFromTray(); });
+    connect(quitAction, &QAction::triggered, this, [this]() { quitFromTray(); });
+    trayIcon_->setContextMenu(trayMenu);
+
+    connect(trayIcon_, &QSystemTrayIcon::activated, this,
+            [this](QSystemTrayIcon::ActivationReason reason)
+            {
+                if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+                {
+                    showMainWindowFromTray();
+                }
+            });
+
+    trayIcon_->show();
+
+    if (startMinimized_)
+    {
+        // 自启不弹窗口，但留一条气泡说明它在跑。
+        trayIcon_->showMessage(QStringLiteral("已在后台启动"),
+                               QStringLiteral("事件同步已开始，双击托盘图标可打开窗口。"),
+                               QSystemTrayIcon::Information, 6000);
+    }
+}
+
+void MainWindow::showMainWindowFromTray()
+{
+    showNormal();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::quitFromTray()
+{
+    quitRequested_ = true;
+    shutdownPipeline();
+    if (trayIcon_)
+    {
+        trayIcon_->hide();
+    }
+    qApp->quit();
 }
 
 void MainWindow::createActions()
@@ -813,7 +923,14 @@ void MainWindow::updateStartupRegistration(bool enabled)
     const QString appName = QCoreApplication::applicationName();
     if (enabled)
     {
-        runKey.setValue(appName, QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
+        /*
+         * P1: 自启时带 --minimized —— 自启的场景本来就是"后台同步"，弹一个窗口
+         * 出来反而碍事。窗口可从托盘双击唤出。
+         */
+        const QString command = QStringLiteral("\"%1\" --minimized")
+                                    .arg(QDir::toNativeSeparators(
+                                        QCoreApplication::applicationFilePath()));
+        runKey.setValue(appName, command);
     }
     else
     {
