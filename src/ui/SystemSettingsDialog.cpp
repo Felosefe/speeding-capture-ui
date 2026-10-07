@@ -92,7 +92,18 @@ QWidget* SystemSettingsDialog::createUiPage()
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     startMaximizedCheck_ = checkBox(QStringLiteral("软件开机最大化"), false);
-    autoListenCheck_ = checkBox(QStringLiteral("自动侦听设备数据"), true);
+    /*
+     * 事件同步开关（2026-10-07）。这一项就是"开始同步 / 暂停同步"：
+     * 勾选 = 后台按 1 Hz 增量拉取板端事件；取消 = 暂停轮询（已同步的数据不动，
+     * "开始拉取到本机"按钮仍然可用）。默认开启。
+     * 底层字段沿用 ui.autoListenDeviceData，MainWindow::applySystemSettings 里
+     * eventController_->setSyncEnabled() 就是接它的；改名只影响 ini 键名，因此这里
+     * 只把界面文案改成说得清的说法，不动存储键，避免老配置丢值。
+     */
+    autoListenCheck_ = checkBox(QStringLiteral("启用事件同步（取消勾选 = 暂停拉取板端数据）"), true);
+    autoListenCheck_->setToolTip(
+        QStringLiteral("勾选后自动增量同步板端事件到本机；取消只暂停自动同步，"
+                       "不影响已同步的数据，也不影响“开始拉取到本机”按钮。"));
     autoConnectCheck_ = checkBox(QStringLiteral("启动自动连接设备"), false);
     fontCombo_ = new QFontComboBox(page);
     fontSizeSpin_ = spinBox(6, 48, 10, QStringLiteral(" pt"));
