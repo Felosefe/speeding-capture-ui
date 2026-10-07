@@ -109,7 +109,7 @@ void DetectionResultWriterTest::writesReadableBundleAndRecordRow()
     // bundle under a new name and never recognise "already written". Assert the
     // stable identity (and that the plate is gone) instead.
     QVERIFY(eventDirs.first().contains(QStringLiteral("_event")));
-    QVERIFY(!eventDirs.first().contains(QStringLiteral("A12345")));
+    QVERIFY(eventDirs.first().contains(QStringLiteral("A12345")));  // plate is back in the name at the user's request
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("summary.txt"))));
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("detail.json"))));
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("ocr.json"))));
