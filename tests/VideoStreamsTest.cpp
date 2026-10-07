@@ -364,16 +364,17 @@ void VideoStreamsTest::uiSeparatesRoleDraftsAndShowsActualResolution()
     QCOMPARE(role->currentData().toInt(), static_cast<int>(RtspStreamRole::Main));
     QVERIFY(!apply->isEnabled());
     /*
-     * 本仓库的下拉框顺序是主码流在前（index 0 = 主码流、1 = 辅码流），PR 的测试
-     * 假设相反，并且把 0/1 硬编码进了断言。这里改成不依赖具体顺序：先在当前码流上
-     * 把 codec 改成 h265，切到另一个码流、再切回来，验证“每个码流各自记住自己的
-     * codec 草稿”这个真正要测的行为。
+     * 按角色显式选中，而不是硬编码 index：本仓库下拉框顺序是主码流在前
+     * （index 0 = 主码流、1 = 辅码流），PR 的测试假设相反，所以它那句“把当前码流的
+     * codec 设成 h265”在本仓库会误改主码流，导致后面断言主码流默认 h264 时失败。
+     * 这里改成先选辅码流设 h265、再切主码流确认它还是 h264、最后回辅码流确认草稿还在，
+     * 用例的判别力与 PR 原意完全一致。
      */
+    role->setCurrentIndex(role->findData(static_cast<int>(RtspStreamRole::Sub)));
     codec->setCurrentIndex(codec->findData(QStringLiteral("h265")));
-    role->setCurrentIndex(role->currentIndex() == 0 ? 1 : 0);
-    const QString otherRoleCodec = codec->currentData().toString();
-    QVERIFY(!otherRoleCodec.isEmpty());
-    role->setCurrentIndex(role->currentIndex() == 0 ? 1 : 0);
+    role->setCurrentIndex(role->findData(static_cast<int>(RtspStreamRole::Main)));
+    QCOMPARE(codec->currentData().toString(), QStringLiteral("h264"));
+    role->setCurrentIndex(role->findData(static_cast<int>(RtspStreamRole::Sub)));
     QCOMPARE(codec->currentData().toString(), QStringLiteral("h265"));
     QCOMPARE(api.writes, 0);
     QVERIFY(apply->isEnabled());
@@ -386,7 +387,13 @@ void VideoStreamsTest::uiSeparatesRoleDraftsAndShowsActualResolution()
     QVERIFY(resolution->text().contains(QStringLiteral("与目标不符")));
     emit player.videoFrameReceived(QSize(1920, 1080));
     QVERIFY(!resolution->text().contains(QStringLiteral("与目标不符")));
-    role->setCurrentIndex(1);
+    /*
+     * 同上：按角色切换而不是硬编码 index。本仓库 index 1 = 辅码流，而前一步刚好
+     * 停在辅码流，写死 1 等于没换索引，currentIndexChanged 不触发，分辨率标签自然
+     * 不会被清空。这里显式切到主码流——这同时也是后面期望 2560×1440 匹配目标的
+     * 原因（主码流就是 2K）。
+     */
+    role->setCurrentIndex(role->findData(static_cast<int>(RtspStreamRole::Main)));
     QVERIFY(resolution->text().contains(QStringLiteral("等待")));
     emit player.videoFrameReceived(QSize(2560, 1440));
     QVERIFY(!resolution->text().contains(QStringLiteral("与目标不符")));
