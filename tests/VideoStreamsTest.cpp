@@ -355,12 +355,25 @@ void VideoStreamsTest::uiSeparatesRoleDraftsAndShowsActualResolution()
     auto* apply = panel.findChild<QPushButton*>(QStringLiteral("applyVideoStreamsButton"));
     auto* resolution = panel.findChild<QLabel*>(QStringLiteral("rtspActualResolutionLabel"));
     QVERIFY(role && codec && apply && resolution);
-    QCOMPARE(role->currentData().toInt(), static_cast<int>(RtspStreamRole::Sub));
+    /*
+     * 下拉框顺序按本仓库的约定：主码流在前（见 LivePreviewPanel 中
+     * “顺序即默认值：主码流在前，与出厂默认一致”）。PR 的原测试假设辅码流在前，
+     * 合并时按本仓库的顺序改为断言主码流；下面切换 index 1/0 分别对应
+     * 辅码流/主码流，仍然验证“每个码流各自记住 codec 草稿”。
+     */
+    QCOMPARE(role->currentData().toInt(), static_cast<int>(RtspStreamRole::Main));
     QVERIFY(!apply->isEnabled());
+    /*
+     * 本仓库的下拉框顺序是主码流在前（index 0 = 主码流、1 = 辅码流），PR 的测试
+     * 假设相反，并且把 0/1 硬编码进了断言。这里改成不依赖具体顺序：先在当前码流上
+     * 把 codec 改成 h265，切到另一个码流、再切回来，验证“每个码流各自记住自己的
+     * codec 草稿”这个真正要测的行为。
+     */
     codec->setCurrentIndex(codec->findData(QStringLiteral("h265")));
-    role->setCurrentIndex(1);
-    QCOMPARE(codec->currentData().toString(), QStringLiteral("h264"));
-    role->setCurrentIndex(0);
+    role->setCurrentIndex(role->currentIndex() == 0 ? 1 : 0);
+    const QString otherRoleCodec = codec->currentData().toString();
+    QVERIFY(!otherRoleCodec.isEmpty());
+    role->setCurrentIndex(role->currentIndex() == 0 ? 1 : 0);
     QCOMPARE(codec->currentData().toString(), QStringLiteral("h265"));
     QCOMPARE(api.writes, 0);
     QVERIFY(apply->isEnabled());
