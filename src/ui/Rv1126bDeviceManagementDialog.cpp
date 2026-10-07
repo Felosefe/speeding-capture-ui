@@ -1630,11 +1630,17 @@ void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
         return;
     }
 
-    const QString runName = QStringLiteral("export_%1").arg(
-        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+    /*
+     * 2026-10-07: NO per-run folder any more.
+     * This used to be  <exportRoot>/<device>/export_<yyyyMMdd_HHmmss>/  which meant
+     * every pull created a brand new folder, its index.csv always started empty, and
+     * the event-level skip could never recognise an already-pulled event - the user
+     * saw "another folder" on every pull and nothing was ever skipped.
+     * One stable folder per device instead:  <exportRoot>/<device>/
+     * so index.csv accumulates across runs and "already pulled" is really recognised.
+     */
     exportTargetRoot_ = QDir(currentEventExportRoot()).filePath(
-        QDir(safeSegment(exportTargetDeviceId_, safeSegment(exportTargetHost_, QStringLiteral("device"))))
-            .filePath(runName));
+        safeSegment(exportTargetDeviceId_, safeSegment(exportTargetHost_, QStringLiteral("device"))));
     exportRunRoot_ = exportTargetRoot_;
     QDir().mkpath(exportRunRoot_);
     /*
