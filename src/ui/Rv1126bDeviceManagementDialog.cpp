@@ -1744,17 +1744,18 @@ void Rv1126bDeviceManagementDialog::handleExportEventDetail(
         : (summary.eventTime.epochMs > 0 ? summary.eventTime.epochMs : QDateTime::currentMSecsSinceEpoch());
     const QDateTime eventTime = QDateTime::fromMSecsSinceEpoch(epochMs).toLocalTime();
     const QString dateDir = eventTime.toString(QStringLiteral("yyyy-MM-dd"));
-    const QString plate = detail.summary.plateText.trimmed().isEmpty()
-        ? (detail.summary.ocrStatus.rawValue.isEmpty()
-               ? QStringLiteral("no_plate")
-               : detail.summary.ocrStatus.rawValue)
-        : detail.summary.plateText.trimmed();
+    /*
+     * 2026-10-07: the folder name must be STABLE across runs, otherwise a repeated
+     * pull can never recognise "already there" and re-downloads everything.
+     * The plate text comes from OCR and can change between runs (missing first,
+     * recognised later), so it must NOT be part of the folder key.
+     * device + event time + eventId + trackId is stable.
+     */
     const QString folderName = safeSegment(
-        QStringLiteral("%1_%4_event%2_track%3")
+        QStringLiteral("%1_event%2_track%3")
             .arg(eventTime.toString(QStringLiteral("yyyyMMdd_HHmmss")))
             .arg(detail.summary.eventId)
-            .arg(detail.summary.trackId)
-            .arg(plate),
+            .arg(detail.summary.trackId),
         QStringLiteral("event"));
     const QString folder = QDir(exportRunRoot_).filePath(QDir(dateDir).filePath(folderName));
     QDir().mkpath(folder);
