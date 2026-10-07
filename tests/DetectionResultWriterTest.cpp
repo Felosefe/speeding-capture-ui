@@ -104,7 +104,12 @@ void DetectionResultWriterTest::writesReadableBundleAndRecordRow()
     const QString eventDir = QDir(QDir(deviceDir).filePath(days.first())).filePath(eventDirs.first());
 
     // 车牌在目录名里，简体中文摘要与三份 JSON 都在
-    QVERIFY(eventDirs.first().contains(QStringLiteral("京A12345")));
+    // 2026-10-07: the folder name no longer contains the plate - plate text comes
+    // from OCR and changes between runs, which made a repeated sync recreate the
+    // bundle under a new name and never recognise "already written". Assert the
+    // stable identity (and that the plate is gone) instead.
+    QVERIFY(eventDirs.first().contains(QStringLiteral("_event")));
+    QVERIFY(!eventDirs.first().contains(QStringLiteral("A12345")));
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("summary.txt"))));
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("detail.json"))));
     QVERIFY(QFileInfo::exists(QDir(eventDir).filePath(QStringLiteral("ocr.json"))));
