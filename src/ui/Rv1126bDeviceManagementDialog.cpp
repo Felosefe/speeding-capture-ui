@@ -541,7 +541,7 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     eventExportRangeCombo_->addItem(QStringLiteral("仅拉取最新 100 条"), QStringLiteral("latest100"));
     eventExportRangeCombo_->addItem(QStringLiteral("最近 N 天"), QStringLiteral("recent_days"));
     eventExportDaysSpin_ = new QSpinBox(exportBox);
-    eventExportDaysSpin_->setRange(1, 7);
+    eventExportDaysSpin_->setRange(1, 3650);
     eventExportDaysSpin_->setValue(1);
     eventExportDaysSpin_->setSuffix(QStringLiteral(" 天"));
     exportEvidenceCheck_ = new QCheckBox(QStringLiteral("证据图 evidence.jpg"), exportBox);
@@ -2065,7 +2065,25 @@ void Rv1126bDeviceManagementDialog::startBoardDataPull()
     }
     boardPullButton_->setText(QStringLiteral("停止拉取"));
     boardPullStatus_->setText(QStringLiteral("正在读取板端事件列表（范围：%1）...").arg(rangeLabel));
-    boardPullService_->start(boardApi_, deviceId_, 5000, cutoffEpochMs);
+    /*
+     * 2026-10-07: merge.  "Start pull to this PC" now drives the event-export
+     * machinery, which already downloads evidence / snapshot / event JSON / OCR JSON
+     * / detail JSON / summary for the chosen range into currentEventExportRoot()
+     * (which honours the target folder above).  The range is taken from the pull row
+     * so both buttons agree on "today / last week / last month / all".
+     */
+    if (eventExportRangeCombo_) {
+        if (cutoffEpochMs <= 0) {
+            const int idx = eventExportRangeCombo_->findData(QStringLiteral("all"));
+            if (idx >= 0) eventExportRangeCombo_->setCurrentIndex(idx);
+        } else {
+            const int idx = eventExportRangeCombo_->findData(QStringLiteral("recent_days"));
+            if (idx >= 0) eventExportRangeCombo_->setCurrentIndex(idx);
+            const qint64 days = qMax<qint64>(1, (QDateTime::currentMSecsSinceEpoch() - cutoffEpochMs) / 86400000LL);
+            if (eventExportDaysSpin_) eventExportDaysSpin_->setValue(static_cast<int>(qMin<qint64>(days, 3650)));
+        }
+    }
+    startEventExport();
 }
 
 void Rv1126bDeviceManagementDialog::cancelBoardDataPull()
@@ -2206,6 +2224,14 @@ QString Rv1126bDeviceManagementDialog::currentEventStorageRoot() const
 
 QString Rv1126bDeviceManagementDialog::currentEventExportRoot() const
 {
+    // 2026-10-07: honour the target folder (local path, or \\host\share for another
+    // PC) when it is set, so pull and export write to the same place.
+    if (eventSyncTargetEdit_) {
+        const QString target = eventSyncTargetEdit_->text().trimmed();
+        if (!target.isEmpty()) {
+            return QDir::cleanPath(target);
+        }
+    }
     return QDir::cleanPath(QDir(currentEventStorageRoot()).filePath(QStringLiteral("rv1126b/exports/events")));
 }
 
