@@ -741,9 +741,10 @@ QWidget* Rv1126bDeviceManagementDialog::createIspPage()
     layout->addLayout(row);
     layout->addStretch();
 
-    connect(ispRefreshButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::refreshIspConfig);
-    connect(ispSaveCurrentButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::saveCurrentIspConfig);
-    connect(ispClearButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::clearIspConfig);
+    /*
+     * 2026-10-07: self-connects of the removed ISP / FTP-config / FTP-tasks pages
+     * are gone (cleanup step 2).  The widgets still exist and are removed in step 3.
+     */
     QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::refreshIspConfig);
     return page;
 }
@@ -777,11 +778,6 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     localFtpHostEdit_->setObjectName(QStringLiteral("localFtpHostEdit"));
     localFtpTargetIdEdit_ = new QLineEdit(defaultLocalFtpTargetId(localFtpHostEdit_->text()), receiver);
     localFtpTargetIdEdit_->setObjectName(QStringLiteral("localFtpTargetIdEdit"));
-    connect(localFtpHostEdit_, &QLineEdit::textChanged,
-            this, &Rv1126bDeviceManagementDialog::syncLocalFtpTargetIdFromHost);
-    connect(localFtpTargetIdEdit_, &QLineEdit::textEdited, this, [this]() {
-        localFtpTargetIdAuto_ = false;
-    });
     localFtpPortSpin_ = new QSpinBox(receiver);
     localFtpPortSpin_->setRange(1, 65535);
     localFtpPortSpin_->setValue(21210);
@@ -810,8 +806,6 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     localFtpStatus_ = new QLabel(receiver);
     localFtpStatus_->setObjectName(QStringLiteral("localFtpStatusLabel"));
     localFtpStatus_->setWordWrap(true);
-    connect(localFtpStartButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::startLocalFtpReceiver);
-    connect(localFtpStopButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::stopLocalFtpReceiver);
     connect(fillTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(false); });
     connect(saveTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(true); });
     receiverLayout->addWidget(new QLabel(QStringLiteral("保存目录"), receiver), 0, 0);
@@ -925,10 +919,6 @@ QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
     auto* rollback = new QPushButton(QStringLiteral("回滚最近配置"), page);
     connect(reload, &QPushButton::clicked, controller_, [this]() {
         if (controller_) { controller_->loadFtpConfig(); controller_->loadFtpControl(); }
-    });
-    connect(saveFtpButton_, &QPushButton::clicked, this, [this]() {
-        const rv1126b::FtpConfigUpdate update = collectFtpConfig();
-        controller_->saveFtpConfigAndEnableNewEvents(update);
     });
     connect(rollback, &QPushButton::clicked, this, [this]() {
         if (QMessageBox::question(this, QStringLiteral("回滚 FTP 配置"),
