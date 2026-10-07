@@ -187,12 +187,6 @@ void Rv1126bDeviceManagementDialog::reject()
     QDialog::reject();
 }
 
-/*
- * 2026-10-07：事件同步状态标签（"已同步 N 条 · 最后同步 HH:mm:ss"）。
- * 用文件级静态指针而不是头文件成员，避免为这个改动去碰 .h；
- * 条数直接用导出/持续同步已有的成功计数，时间取完成时刻。
- */
-static QLabel* s_syncCountLabel = nullptr;
 QWidget* Rv1126bDeviceManagementDialog::createEvidencePage()
 {
     auto* page = new QWidget(this);
@@ -294,10 +288,10 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     eventSyncModeLabel_ = new QLabel(summary);
     eventSyncRootLabel_ = new QLabel(summary);
     // 2026-10-07：状态行「已同步 N 条 · 最后同步时间」
-    s_syncCountLabel = new QLabel(QStringLiteral("已同步：尚未同步"), page);
-    s_syncCountLabel->setObjectName(QStringLiteral("eventSyncCountLabel"));
-    s_syncCountLabel->setStyleSheet(QStringLiteral("color:#44515f;"));
-    layout->addWidget(s_syncCountLabel);
+    eventSyncCountLabel_ = new QLabel(QStringLiteral("已同步：尚未同步"), page);
+    eventSyncCountLabel_->setObjectName(QStringLiteral("eventSyncCountLabel"));
+    eventSyncCountLabel_->setStyleSheet(QStringLiteral("color:#44515f;"));
+    layout->addWidget(eventSyncCountLabel_);
 
     eventSyncStatus_ = new QLabel(summary);
     eventStorageRootEdit_ = new QLineEdit(defaultEventStorageRoot(), summary);
@@ -523,7 +517,6 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     eventExportStatus_ = new QLabel(QStringLiteral("导出目录：%1").arg(currentEventExportRoot()), exportBox);
     eventExportStatus_->setObjectName(QStringLiteral("eventExportStatusLabel"));
     eventExportStatus_->setWordWrap(true);
-    exportLayout->addWidget(new QLabel(QStringLiteral("板端 IP"), exportBox), 0, 0);
     exportLayout->addWidget(new QLabel(QStringLiteral("范围"), exportBox), 1, 0);
     exportLayout->addWidget(eventExportRangeCombo_, 1, 1);
     exportLayout->addWidget(eventExportDaysSpin_, 1, 2);
@@ -738,10 +731,10 @@ void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
         if (eventExportButton_) eventExportButton_->setEnabled(boardApi_ != nullptr);
         if (boardPullButton_) boardPullButton_->setText(QStringLiteral("开始拉取到本机"));
 
-        if (s_syncCountLabel) {
-            s_syncCountLabel->setText(QStringLiteral("已同步 %1 条 · 最后同步 %2")
-                                          .arg(exportSucceeded_)
-                                          .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+        if (eventSyncCountLabel_) {
+            eventSyncCountLabel_->setText(QStringLiteral("已同步 %1 条 · 最后同步 %2")
+                                              .arg(exportSucceeded_)
+                                              .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
         }
 
         if (eventExportStatus_) {
@@ -1244,8 +1237,8 @@ QString Rv1126bDeviceManagementDialog::currentEventExportRoot() const
 
 QStringList Rv1126bDeviceManagementDialog::eventExportHosts() const
 {
-    QString text = eventSyncHostsEdit_ ? eventSyncHostsEdit_->text() : QString();
-    if (text.trimmed().isEmpty()) text = deviceEndpointText_.section(QLatin1Char(':'), 0, 0);
+    // 唯一的目标就是设备端点里的 host（原来那个 HTTP hosts 输入框已经删掉了）。
+    const QString text = deviceEndpointText_.section(QLatin1Char(':'), 0, 0);
     QStringList values = text.split(QRegularExpression(QStringLiteral(R"([,;，；\s]+)")),
                                     Qt::SkipEmptyParts);
     QStringList hosts;

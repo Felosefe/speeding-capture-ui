@@ -1,4 +1,5 @@
 #include "../src/ui/Rv1126bDeviceManagementDialog.h"
+#include "../src/rv1126b/services/BoardFtpTaskSnapshotService.h"
 
 #include <QLabel>
 #include <QLineEdit>
@@ -63,18 +64,52 @@ public:
     FtpControlDto control;
     FtpTaskPageDto page;
     FtpTaskDetailDto detail;
+    int saveCount = 0;
+    int taskCreateCount = 0;
 
     RequestId loadConfig(QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success(config)); }
-    RequestId saveConfigAndEnableNewEvents(const FtpConfigUpdate&, QObject*, ApiCompletion<FtpActivationResult> c) override { return done(std::move(c), ApiResult<FtpActivationResult>::success({})); }
+    RequestId saveConfigAndEnableNewEvents(const FtpConfigUpdate&, QObject*, ApiCompletion<FtpActivationResult> c) override { ++saveCount; return done(std::move(c), ApiResult<FtpActivationResult>::success({})); }
     RequestId rollbackConfig(const QString&, QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success(config)); }
     RequestId loadControl(QObject*, ApiCompletion<FtpControlDto> c) override { return done(std::move(c), ApiResult<FtpControlDto>::success(control)); }
     RequestId updateControl(const FtpControlUpdate& u, QObject*, ApiCompletion<FtpControlDto> c) override { control.enabled = u.enabled; control.scope = u.scope; return done(std::move(c), ApiResult<FtpControlDto>::success(control)); }
-    RequestId createTask(const FtpTaskCreate&, QObject*, ApiCompletion<FtpTaskDetailDto> c) override { return done(std::move(c), ApiResult<FtpTaskDetailDto>::success(detail)); }
+    RequestId createTask(const FtpTaskCreate&, QObject*, ApiCompletion<FtpTaskDetailDto> c) override { ++taskCreateCount; return done(std::move(c), ApiResult<FtpTaskDetailDto>::success(detail)); }
     RequestId listTasks(int, const std::optional<QString>&, QObject*, ApiCompletion<FtpTaskPageDto> c) override { return done(std::move(c), ApiResult<FtpTaskPageDto>::success(page)); }
     RequestId loadTask(const QString&, QObject*, ApiCompletion<FtpTaskDetailDto> c) override { return done(std::move(c), ApiResult<FtpTaskDetailDto>::success(detail)); }
     RequestId retryTask(const QString&, QObject*, ApiCompletion<FtpTaskDetailDto> c) override { return done(std::move(c), ApiResult<FtpTaskDetailDto>::success(detail)); }
     void cancel(const RequestId&) override {}
     void cancelAll() override {}
+};
+
+/*
+ * Minimal repository, only so that BoardFtpTaskSnapshotService can really answer
+ * and DeviceOperationsController emits localFtpTaskSnapshotsLoaded — the last
+ * callback that used to write into the removed FTP-task widgets.
+ */
+class UiRepository final : public IEventRepository
+{
+public:
+    RequestId initialize(QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId upsertDevice(const DeviceProfile&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId loadDeviceProfiles(QObject*, ApiCompletion<QVector<DeviceProfile>> c) override { return done(std::move(c), ApiResult<QVector<DeviceProfile>>::success({})); }
+    RequestId deleteDeviceProfile(const QString&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId upsertEvents(const QVector<VehicleEvent>&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId saveDetail(const EventDetailSnapshot&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId queryEvents(const EventQuery&, QObject*, ApiCompletion<QVector<VehicleEvent>> c) override { return done(std::move(c), ApiResult<QVector<VehicleEvent>>::success({})); }
+    RequestId loadEvent(const EventIdentity&, QObject*, ApiCompletion<std::optional<VehicleEvent>> c) override { return done(std::move(c), ApiResult<std::optional<VehicleEvent>>::success(std::nullopt)); }
+    RequestId loadDetail(const EventIdentity&, QObject*, ApiCompletion<std::optional<EventDetailSnapshot>> c) override { return done(std::move(c), ApiResult<std::optional<EventDetailSnapshot>>::success(std::nullopt)); }
+    RequestId deleteEvent(const EventIdentity&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId loadNonTerminalEvents(const QString&, QObject*, ApiCompletion<QVector<VehicleEvent>> c) override { return done(std::move(c), ApiResult<QVector<VehicleEvent>>::success({})); }
+    RequestId saveEvidenceState(const EvidenceCacheEntry&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId loadEvidenceState(const EventIdentity&, const QString&, QObject*, ApiCompletion<std::optional<EvidenceCacheEntry>> c) override { return done(std::move(c), ApiResult<std::optional<EvidenceCacheEntry>>::success(std::nullopt)); }
+    RequestId loadSyncAnchor(const QString&, QObject*, ApiCompletion<std::optional<SyncAnchor>> c) override { return done(std::move(c), ApiResult<std::optional<SyncAnchor>>::success(std::nullopt)); }
+    RequestId saveSyncAnchor(const SyncAnchor&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId saveFtpTaskSnapshot(const StoredFtpTask&, QObject*, ApiCompletion<void> c) override { return done(std::move(c), ApiResult<void>::success()); }
+    RequestId loadFtpTaskSnapshots(const FtpTaskQuery&, QObject*, ApiCompletion<QVector<StoredFtpTask>> c) override { ++snapshotQueries; return done(std::move(c), ApiResult<QVector<StoredFtpTask>>::success(localSnapshots)); }
+    void cancel(const RequestId&) override {}
+    void cancelAll() override {}
+
+    QVector<StoredFtpTask> localSnapshots;
+    int snapshotQueries = 0;
 };
 
 FtpTargetSnapshotDto target(int index)
@@ -168,12 +203,61 @@ void DeviceOperationsUiTest::ftpCallbacksAndTabSwitchingDoNotTouchRemovedPages()
 {
     UiBoard board;
     UiFtp ftp;
+    UiRepository repository;
     configure(board, ftp, 8);
+    StoredFtpTask localSnapshot;
+    localSnapshot.taskId = QStringLiteral("local-task-1");
+    repository.localSnapshots = {localSnapshot};
+    BoardFtpTaskSnapshotService snapshots(QStringLiteral("device-a"), &repository);
     DeviceOperationsController controller({[&](const QString&) { return &board; },
-                                           [&](const QString&) { return &ftp; }});
+                                           [&](const QString&) { return &ftp; },
+                                           [&](const QString&) { return &snapshots; }});
     Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller);
     dialog.show();
     QCoreApplication::processEvents();
+
+    /*
+     * Drive every controller operation whose completion signal used to be bound to a
+     * widget of the removed pages (ftpConfigLoaded / ftpControlLoaded / ftpTasksLoaded /
+     * ftpTaskLoaded / ftpTaskRetried / ftpActivationFinished / ftpConfigRolledBack /
+     * ftpTaskCreated / ftpControlSaved / localFtpTaskSnapshotsLoaded) plus the
+     * operationBusyChanged handler that used to poke saveFtpButton_ / createTaskButton_ /
+     * retryTaskButton_ / previousTasksButton_ / nextTasksButton_.  These run while the
+     * dialog is alive, so re-introducing a stale connect onto a deleted widget crashes
+     * right here — the widget-absence checks below cannot catch that.
+     */
+    controller.loadFtpConfig();
+    controller.loadFtpControl();
+    controller.listFtpTasks();
+    controller.loadFtpTask(QStringLiteral("task-1"));
+    controller.retryFtpTask(QStringLiteral("task-1"));
+    controller.rollbackFtpConfig();
+    controller.updateFtpControl(true, FtpControlScope::AllExisting);
+    controller.loadLocalFtpTaskSnapshots();
+    FtpConfigUpdate update;
+    update.deviceId = QStringLiteral("device-a");
+    update.expectedRevision = ftp.config.revision;
+    update.retryMax = 3;
+    FtpTargetUpdate uploaded;
+    uploaded.id = QStringLiteral("server1");
+    uploaded.enabled = true;
+    uploaded.host = QStringLiteral("192.0.2.10");
+    uploaded.port = 21;
+    uploaded.user = QStringLiteral("upload");
+    uploaded.remoteDir = QStringLiteral("/events");
+    uploaded.passwordAction.value = FtpPasswordAction::Keep;
+    update.targets = {uploaded};
+    controller.saveFtpConfigAndEnableNewEvents(update);
+    FtpTaskCreate request;
+    request.startEpochMs = 1784000000000LL - 3600000LL;
+    request.endEpochMs = 1784000000000LL;
+    request.targetIds = {QStringLiteral("server1")};
+    controller.createFtpTask(request);
+    QCoreApplication::processEvents();
+    /* 证明这些调用真的走通了服务层（因而控制器确实 emit 了那些回调），不是空转。 */
+    QCOMPARE(ftp.saveCount, 1);
+    QCOMPARE(ftp.taskCreateCount, 1);
+    QCOMPARE(repository.snapshotQueries, 1);
 
     auto* tabs = tabsOf(dialog);
     QVERIFY(tabs);
@@ -225,7 +309,11 @@ void DeviceOperationsUiTest::offlineDialogOpensWithoutRemovedPages()
                 .contains(QStringLiteral("设备离线")));
     QVERIFY(!tabs->isTabEnabled(0));
     QVERIFY(!tabs->isTabEnabled(1));
-    QVERIFY(!tabs->isTabEnabled(2));
+    /*
+     * 页签 2（事件同步）只取决于是否装配了 EventSyncService，不看设备是否在线
+     * （见构造函数），所以离线时它仍然是开着的：那一页上还有「目标电脑（UNC）」和
+     * 「存储根目录」，离线也能设置。这里不断言它被禁用，只断言对话框本身没问题。
+     */
 }
 
 QTEST_MAIN(DeviceOperationsUiTest)

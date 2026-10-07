@@ -134,6 +134,11 @@ private:
     bool timeSetEnabled_ = false;
 
     QLabel* eventSyncStatus_ = nullptr;
+    /*
+     * 「已同步 N 条 · 最后同步 HH:mm:ss」。以前是文件级静态指针，多个设备的对话框
+     * 会互相覆盖，对话框析构后还会留下悬空指针——现在是本对话框自己的成员。
+     */
+    QLabel* eventSyncCountLabel_ = nullptr;
     QLabel* eventSyncModeLabel_ = nullptr;
     QLabel* eventSyncRootLabel_ = nullptr;
     QPushButton* eventSyncStartButton_ = nullptr;
@@ -146,9 +151,7 @@ private:
     QComboBox* boardPullRangeCombo_ = nullptr;
     QLabel* boardPullStatus_ = nullptr;
     rv1126b::BoardDataPullService* boardPullService_ = nullptr;
-    rv1126b::DetectionResultWriter* detectionWriter_ = nullptr;
     rv1126b::DetectionPullDependencies detectionPull_;
-    QLineEdit* eventSyncHostsEdit_ = nullptr;
     /*
      * 目标电脑（2026-10-07）：拉取结果的落地目录。留空 = 本机默认目录；
      * 填 UNC（\\对方IP\共享名\子目录）就是把资料包直接写到局域网内指定 IP 的电脑上。
