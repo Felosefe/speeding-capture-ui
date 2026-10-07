@@ -224,10 +224,22 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     tabs_->setObjectName(QStringLiteral("deviceOperationsTabs"));
     tabs_->addTab(createEvidencePage(), QStringLiteral("展示配置"));
     tabs_->addTab(createTimePage(), QStringLiteral("时间"));
-    tabs_->addTab(createEventSyncPage(), QStringLiteral("HTTP 事件同步"));
-    tabs_->addTab(createIspPage(), QStringLiteral("图像/曝光"));
-    tabs_->addTab(createFtpConfigPage(), QStringLiteral("FTP 配置"));
-    tabs_->addTab(createFtpTasksPage(), QStringLiteral("FTP 历史任务"));
+    /*
+     * 2026-10-07：事件同步重做成独立一页。原来的“HTTP 事件同步”连同图像曝光、
+     * FTP 配置、FTP 历史任务一起删掉了（那几页是乱写的）。
+     */
+    tabs_->addTab(createEventSyncPage(), QStringLiteral("事件同步"));
+    /*
+     * 2026-10-07: the ISP / FTP-config / FTP-tasks pages were removed from the UI
+     * at the user's request. Their widgets are still constructed (and deliberately
+     * NOT added to tabs_) because connectController() binds board callbacks to them
+     * and the constructor calls controller_->loadAll(); a callback writing into a
+     * nullptr widget crashes this dialog. Removing the widgets means also removing
+     * those bindings - that cleanup is a separate step.
+     */
+    createIspPage();
+    createFtpConfigPage();
+    createFtpTasksPage();
     tabs_->setCurrentIndex(static_cast<int>(initialPage));
     layout->addWidget(tabs_, 1);
 
@@ -249,11 +261,6 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     tabs_->setTabEnabled(0, deviceOnline_ && controller_->boardApiAvailable());
     tabs_->setTabEnabled(1, deviceOnline_ && controller_->boardApiAvailable());
     tabs_->setTabEnabled(2, eventSyncService_ != nullptr);
-    tabs_->setTabEnabled(3, deviceOnline_ && boardApi_ != nullptr);
-    tabs_->setTabEnabled(4, deviceOnline_ && controller_->ftpServiceAvailable());
-    tabs_->setTabEnabled(5, (deviceOnline_ && controller_->ftpServiceAvailable())
-                                || controller_->ftpTaskSnapshotAvailable());
-    createTaskButton_->setEnabled(deviceOnline_ && controller_->ftpServiceAvailable());
     if (deviceOnline_) {
         controller_->loadAll();
     } else {
@@ -442,6 +449,43 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     pullRowLayout->addWidget(boardPullButton_);
     pullRowLayout->addWidget(boardPullRangeCombo_);
     pullRowLayout->addWidget(boardPullStatus_, 1);
+
+    /*
+     * 目标电脑（2026-10-07）。默认本机；填 UNC（\\对方IP\共享名\子目录）就是把
+     * 拉回来的资料包直接写到局域网内指定 IP 的电脑上 —— 这是"拉到指定 IP 的电脑"
+     * 里唯一既不用对方装接收程序、也不用改板端的做法：对方只要把那个文件夹设成
+     * 共享且可写。另一条路是在那台电脑上装同一软件、填板端 IP+Token 直接拉，
+     * 下面那行提示里两条都写明了。
+     */
+    auto* targetRow = new QWidget(pullBox);
+    auto* targetRowLayout = new QHBoxLayout(targetRow);
+    targetRowLayout->setContentsMargins(0, 0, 0, 0);
+    targetRowLayout->addWidget(new QLabel(QStringLiteral("目标电脑"), targetRow));
+    eventSyncTargetEdit_ = new QLineEdit(targetRow);
+    eventSyncTargetEdit_->setObjectName(QStringLiteral("eventSyncTargetFolderEdit"));
+    eventSyncTargetEdit_->setPlaceholderText(
+        QStringLiteral("本机文件夹；或 \\\\对方IP\\共享名\\子目录"));
+    if (detectionPull_.writer) {
+        eventSyncTargetEdit_->setText(detectionPull_.writer->targetRoot());
+    }
+    targetRowLayout->addWidget(eventSyncTargetEdit_, 1);
+    auto* targetBrowseButton = new QPushButton(QStringLiteral("浏览…"), targetRow);
+    connect(targetBrowseButton, &QPushButton::clicked, this,
+            [this]() { browseEventSyncTargetFolder(); });
+    targetRowLayout->addWidget(targetBrowseButton);
+    auto* targetApplyButton = new QPushButton(QStringLiteral("保存目标"), targetRow);
+    connect(targetApplyButton, &QPushButton::clicked, this,
+            [this]() { applyEventSyncTargetFolder(); });
+    targetRowLayout->addWidget(targetApplyButton);
+    pullLayout->addWidget(targetRow);
+
+    auto* targetHint = new QLabel(
+        QStringLiteral("要给另一台电脑：① 这里填 \\\\对方IP\\共享名（对方需共享可写文件夹）；"
+                       "② 或在那台电脑上装同一软件，填板端 IP 与 Token 直接拉。"),
+        pullBox);
+    targetHint->setWordWrap(true);
+    targetHint->setStyleSheet(QStringLiteral("color:#44515f;"));
+    pullLayout->addWidget(targetHint);
     pullLayout->addWidget(pullRow);
 
     const bool pullAvailable = detectionPull_.repository && detectionPull_.writer && boardApi_;
@@ -1941,6 +1985,43 @@ void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config
                   ? QStringLiteral("已在板端落盘，重启相机服务或断电重启后生效（本次重启前画面不变）")
                   : QStringLiteral("板端已保存的值与本次读取一致，无需重启"));
     ispStatus_->setText(lines.join(QStringLiteral("；")));
+}
+
+void Rv1126bDeviceManagementDialog::browseEventSyncTargetFolder()
+{
+    const QString start = eventSyncTargetEdit_ ? eventSyncTargetEdit_->text().trimmed() : QString();
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("选择拉取的目标文件夹"), start);
+    if (!dir.isEmpty() && eventSyncTargetEdit_) {
+        eventSyncTargetEdit_->setText(QDir::toNativeSeparators(dir));
+    }
+}
+
+void Rv1126bDeviceManagementDialog::applyEventSyncTargetFolder()
+{
+    if (!eventSyncTargetEdit_ || !boardPullStatus_) {
+        return;
+    }
+    const QString path = eventSyncTargetEdit_->text().trimmed();
+    if (path.isEmpty()) {
+        boardPullStatus_->setText(QStringLiteral("目标文件夹不能为空（留空即用默认目录时请点“重新读取”）"));
+        return;
+    }
+    if (!detectionPull_.writer) {
+        boardPullStatus_->setText(QStringLiteral("本设备没有装配检测结果写入器，无法设置目标"));
+        return;
+    }
+    /*
+     * 本地路径与 UNC（\\对方IP\共享名\子目录）在这里一视同仁：交给 writer 去
+     * 创建/探测。失败就把原因显示出来 —— 绝不能"设置看起来成功了、数据其实没落地"。
+     */
+    detectionPull_.writer->setTargetRoot(path);
+    QString errorMessage;
+    if (detectionPull_.writer->ensureTargetRoot(&errorMessage)) {
+        boardPullStatus_->setText(QStringLiteral("目标文件夹：%1").arg(path));
+    } else {
+        boardPullStatus_->setText(QStringLiteral("目标不可用：%1").arg(errorMessage));
+    }
 }
 
 void Rv1126bDeviceManagementDialog::startBoardDataPull()

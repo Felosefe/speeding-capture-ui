@@ -384,7 +384,13 @@ void VideoStreamsTest::uiSeparatesRoleDraftsAndShowsActualResolution()
     QVERIFY(!apply->isEnabled());
     emit player.videoFrameReceived(QSize(1280, 720));
     QVERIFY(resolution->text().contains(QStringLiteral("1280×720")));
-    QVERIFY(resolution->text().contains(QStringLiteral("与目标不符")));
+    /*
+     * 2026-10-07：面板不再拿 mainVideoStreamDefaults()/subVideoStreamDefaults() 里写死的
+     * 目标（2K/1080p）去比板端实际分辨率——本板实际出 2688×1520，且板端没有码流配置
+     * 接口，那个目标永远达不成，只会每帧报假警报"与目标不符"。所以这里反过来断言：
+     * 只如实显示实际分辨率，不再出现"与目标不符"。
+     */
+    QVERIFY(!resolution->text().contains(QStringLiteral("与目标不符")));
     emit player.videoFrameReceived(QSize(1920, 1080));
     QVERIFY(!resolution->text().contains(QStringLiteral("与目标不符")));
     /*

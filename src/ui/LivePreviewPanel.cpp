@@ -351,9 +351,15 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
     streamCombo_->setObjectName(QStringLiteral("rtspStreamRoleCombo"));
     streamCombo_->setToolTip(QStringLiteral("默认使用主码流（画面最清晰）。网络或电脑吃力时可切到辅码流，选择会被记住。"));
     // 顺序即默认值：主码流在前，与出版默认一致；用户在系统设置或此处改动后会被持久化。
-    streamCombo_->addItem(QStringLiteral("主码流 2K（2560×1440）"),
+    /*
+     * 2026-10-07：下拉项不再写死分辨率。板端实际出流是 2688×1520，而"2K（2560×1440）"
+     * /"1080p（1920×1080）"是当初按目标写的，本板 app_api 又没有码流配置接口，
+     * 那个目标永远达不成，于是面板一直报"与目标不符"——那是假警报。现在只写
+     * 主/辅码流，分辨率交给下面那行"实际：…"如实显示。
+     */
+    streamCombo_->addItem(QStringLiteral("主码流"),
                           static_cast<int>(rv1126b::RtspStreamRole::Main));
-    streamCombo_->addItem(QStringLiteral("辅码流 1080p（1920×1080）"),
+    streamCombo_->addItem(QStringLiteral("辅码流"),
                           static_cast<int>(rv1126b::RtspStreamRole::Sub));
 
     triggerModeCombo_ = new QComboBox(this);
@@ -509,13 +515,15 @@ LivePreviewPanel::LivePreviewPanel(rv1126b::IRtspPlayer* player, QWidget* parent
         connect(player, &rv1126b::IRtspPlayer::videoFrameReceived, this, [this](const QSize& frameSize) {
             if (lineOverlay_) lineOverlay_->setFrameSize(frameSize);
             if (!frameSize.isValid()) return;
-            const auto target = streamCombo_->currentData().toInt() == static_cast<int>(rv1126b::RtspStreamRole::Main)
-                ? rv1126b::mainVideoStreamDefaults() : rv1126b::subVideoStreamDefaults();
-            const bool matches = frameSize == QSize(target.width, target.height);
-            actualResolutionLabel_->setText(QStringLiteral("实际：%1×%2%3")
-                .arg(frameSize.width()).arg(frameSize.height())
-                .arg(matches ? QString() : QStringLiteral("（与目标不符）")));
-            actualResolutionLabel_->setStyleSheet(matches ? QString() : QStringLiteral("color: #b42318;"));
+            /*
+             * 2026-10-07：不再和 mainVideoStreamDefaults()/subVideoStreamDefaults() 里
+             * 写死的目标比。那两个是当初按 2K/1080p 写的目标值，而本板实际出流是
+             * 2688×1520，且板端 app_api 没有码流配置接口 —— 目标永远达不成，
+             * 于是每帧都报"与目标不符"，是假警报。现在如实显示板端实际分辨率。
+             */
+            actualResolutionLabel_->setText(QStringLiteral("实际：%1×%2")
+                .arg(frameSize.width()).arg(frameSize.height()));
+            actualResolutionLabel_->setStyleSheet(QString());
         });
     }
     setDetectionBusy(false);

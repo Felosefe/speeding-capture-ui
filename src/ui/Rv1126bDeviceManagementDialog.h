@@ -69,6 +69,9 @@ private:
     QWidget* createEvidencePage();
     QWidget* createTimePage();
     QWidget* createEventSyncPage();
+    /* 目标电脑（指定 IP / UNC 共享）的选择与保存 */
+    void browseEventSyncTargetFolder();
+    void applyEventSyncTargetFolder();
     QWidget* createIspPage();
     QWidget* createFtpConfigPage();
     QWidget* createFtpTasksPage();
@@ -181,6 +184,11 @@ private:
     rv1126b::DetectionResultWriter* detectionWriter_ = nullptr;
     rv1126b::DetectionPullDependencies detectionPull_;
     QLineEdit* eventSyncHostsEdit_ = nullptr;
+    /*
+     * 目标电脑（2026-10-07）：拉取结果的落地目录。留空 = 本机默认目录；
+     * 填 UNC（\\对方IP\共享名\子目录）就是把资料包直接写到局域网内指定 IP 的电脑上。
+     */
+    QLineEdit* eventSyncTargetEdit_ = nullptr;
     QSpinBox* eventExportDaysSpin_ = nullptr;
     QLineEdit* eventStorageRootEdit_ = nullptr;
     QPushButton* eventStorageBrowseButton_ = nullptr;
