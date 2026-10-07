@@ -105,6 +105,9 @@ SystemSettings SystemSettingsService::normalized(SystemSettings settings) const
     settings.maintenance.expireCaptureDays = qBound(1, settings.maintenance.expireCaptureDays, 3650);
     settings.maintenance.expireVideoDays = qBound(1, settings.maintenance.expireVideoDays, 3650);
     settings.maintenance.minFreeSpaceGb = qBound(1, settings.maintenance.minFreeSpaceGb, 1024);
+    /* 0 is meaningful here (no cutoff = everything), so only the upper bound is clamped. */
+    settings.maintenance.eventSyncRangeDays =
+        qBound(0, settings.maintenance.eventSyncRangeDays, 3650);
 
     return settings;
 }
@@ -166,6 +169,8 @@ void SystemSettingsService::readMaintenanceSettings(QSettings& store, Maintenanc
     settings.expireVideoDays = store.value(QStringLiteral("expireVideoDays"), settings.expireVideoDays).toInt();
     settings.minFreeSpaceGb = store.value(QStringLiteral("minFreeSpaceGb"), settings.minFreeSpaceGb).toInt();
     settings.deleteOldestWhenLowSpace = store.value(QStringLiteral("deleteOldestWhenLowSpace"), settings.deleteOldestWhenLowSpace).toBool();
+    settings.eventSyncEnabled = store.value(QStringLiteral("eventSyncEnabled"), settings.eventSyncEnabled).toBool();
+    settings.eventSyncRangeDays = store.value(QStringLiteral("eventSyncRangeDays"), settings.eventSyncRangeDays).toInt();
     store.endGroup();
 }
 
@@ -225,6 +230,8 @@ void SystemSettingsService::writeMaintenanceSettings(QSettings& store, const Mai
     store.setValue(QStringLiteral("expireVideoDays"), settings.expireVideoDays);
     store.setValue(QStringLiteral("minFreeSpaceGb"), settings.minFreeSpaceGb);
     store.setValue(QStringLiteral("deleteOldestWhenLowSpace"), settings.deleteOldestWhenLowSpace);
+    store.setValue(QStringLiteral("eventSyncEnabled"), settings.eventSyncEnabled);
+    store.setValue(QStringLiteral("eventSyncRangeDays"), settings.eventSyncRangeDays);
     store.endGroup();
 }
 

@@ -228,6 +228,28 @@ QWidget* SystemSettingsDialog::createMaintenancePage()
     form->addRow(QStringLiteral("录像过期天数"), expireVideoDaysSpin_);
     form->addRow(QStringLiteral("最小剩余空间"), minFreeSpaceSpin_);
     form->addRow(QString(), deleteOldestCheck_);
+
+    /*
+     * Event sync (2026-10-07).  Kept on this page rather than a page of its own: it
+     * is a handful of controls and the page tree/stack wiring is shared.  Splitting
+     * it into its own page later is a matter of moving these rows into a builder.
+     */
+    eventSyncCheck_ = checkBox(QStringLiteral("启用事件同步（取消勾选 = 暂停拉取）"), true);
+    eventSyncRangeCombo_ = comboBox(QStringList{QStringLiteral("今天"),
+                                                QStringLiteral("最近一周"),
+                                                QStringLiteral("最近一月"),
+                                                QStringLiteral("全部")},
+                                    QStringLiteral("最近一周"));
+    form->addRow(QStringLiteral("事件同步"), eventSyncCheck_);
+    form->addRow(QStringLiteral("同步范围"), eventSyncRangeCombo_);
+    auto* syncHint = new QLabel(
+        QStringLiteral("点“确定”后按所选范围立即拉取一次（只新增，不删除本地已有数据），之后自动增量同步。\n"
+                       "要在另一台电脑上取数据：在那台电脑上装同一个软件，填入板子 IP 和 Token 即可。"),
+        page);
+    syncHint->setWordWrap(true);
+    syncHint->setStyleSheet(QStringLiteral("color:#44515f;"));
+    form->addRow(QString(), syncHint);
+
     return scrollPage(page);
 }
 
@@ -285,6 +307,16 @@ void SystemSettingsDialog::loadFromSettings()
     expireVideoDaysSpin_->setValue(settings_.maintenance.expireVideoDays);
     minFreeSpaceSpin_->setValue(settings_.maintenance.minFreeSpaceGb);
     deleteOldestCheck_->setChecked(settings_.maintenance.deleteOldestWhenLowSpace);
+
+    /* Event sync: combo index 0..3 <-> 今天(1) / 一周(7) / 一月(30) / 全部(0). */
+    eventSyncCheck_->setChecked(settings_.maintenance.eventSyncEnabled);
+    switch (settings_.maintenance.eventSyncRangeDays) {
+    case 1: eventSyncRangeCombo_->setCurrentIndex(0); break;
+    case 30: eventSyncRangeCombo_->setCurrentIndex(2); break;
+    case 0: eventSyncRangeCombo_->setCurrentIndex(3); break;
+    case 7:
+    default: eventSyncRangeCombo_->setCurrentIndex(1); break;
+    }
 }
 
 void SystemSettingsDialog::applyToSettings()
@@ -336,6 +368,15 @@ void SystemSettingsDialog::applyToSettings()
     settings_.maintenance.expireVideoDays = expireVideoDaysSpin_->value();
     settings_.maintenance.minFreeSpaceGb = minFreeSpaceSpin_->value();
     settings_.maintenance.deleteOldestWhenLowSpace = deleteOldestCheck_->isChecked();
+
+    settings_.maintenance.eventSyncEnabled = eventSyncCheck_->isChecked();
+    switch (eventSyncRangeCombo_->currentIndex()) {
+    case 0: settings_.maintenance.eventSyncRangeDays = 1; break;
+    case 2: settings_.maintenance.eventSyncRangeDays = 30; break;
+    case 3: settings_.maintenance.eventSyncRangeDays = 0; break;
+    case 1:
+    default: settings_.maintenance.eventSyncRangeDays = 7; break;
+    }
 }
 
 QLineEdit* SystemSettingsDialog::lineEdit(const QString& text)

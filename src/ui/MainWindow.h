@@ -237,6 +237,12 @@ private:
     bool mockMode_ = false;
     bool shutdownStarted_ = false;
     /*
+     * Event sync settings page: the range that was last turned into a backfill, so
+     * confirming the dialog for an unrelated setting (a font size, say) does not kick
+     * off another pull.  -1 = nothing applied yet.
+     */
+    int lastAppliedSyncRangeDays_ = -1;
+    /*
      * P1 (2026-10-07): 事件同步是后台任务，因为“关窗口 = 退出 = 停止同步”，
      * 关掉窗口后板端事件就不再落到电脑上。有系统托盘时关窗口只隐藏窗口，
      * 同步继续；真正退出走托盘菜单的“退出”（置 quitRequested_ 后关闭）。

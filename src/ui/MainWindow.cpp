@@ -1581,6 +1581,42 @@ void MainWindow::openGlobalSettings()
     }
 
     currentSystemSettings_ = systemSettingsService_->settings();
+    /*
+     * Event sync settings (2026-10-07).
+     *
+     * 1) Start/pause: the controller already knows how to do this; pausing stops the
+     *    1 Hz poll and leaves everything already synced on disk.
+     * 2) Range backfill: run it once when the range actually changed, so confirming
+     *    the dialog for some unrelated setting does not trigger another pull.  The
+     *    backfill only adds events - nothing local is deleted - and the service goes
+     *    back to its incremental poll afterwards.
+     */
+    if (eventController_)
+    {
+        eventController_->setSyncEnabled(currentSystemSettings_.maintenance.eventSyncEnabled);
+
+        const int rangeDays = currentSystemSettings_.maintenance.eventSyncRangeDays;
+        if (rangeDays != lastAppliedSyncRangeDays_)
+        {
+            lastAppliedSyncRangeDays_ = rangeDays;
+            qint64 cutoffEpochMs = 0;
+            if (rangeDays > 0)
+            {
+                const QDateTime startOfToday = QDateTime(QDate::currentDate(), QTime(0, 0));
+                const qint64 baseEpochMs = (rangeDays == 1)
+                                               ? startOfToday.toMSecsSinceEpoch()
+                                               : QDateTime::currentDateTime().toMSecsSinceEpoch();
+                cutoffEpochMs = baseEpochMs - static_cast<qint64>(rangeDays - 1) * 86400000LL;
+            }
+            eventController_->syncRange(cutoffEpochMs);
+            statusBar()->showMessage(
+                QStringLiteral("已按所选范围拉取板端事件（范围：%1）")
+                    .arg(rangeDays > 0 ? QStringLiteral("最近 %1 天").arg(rangeDays)
+                                       : QStringLiteral("全部")),
+                6000);
+        }
+    }
+
     if (!mockMode_ && previousStorageRoot != currentSystemSettings_.storage.rootPath && switchEvidenceRoot_)
     {
         const QString newEvidenceRoot = QDir(currentSystemSettings_.storage.rootPath)

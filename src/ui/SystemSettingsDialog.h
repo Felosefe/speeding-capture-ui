@@ -84,4 +84,7 @@ private:
     QSpinBox* expireVideoDaysSpin_ = nullptr;
     QSpinBox* minFreeSpaceSpin_ = nullptr;
     QCheckBox* deleteOldestCheck_ = nullptr;
+    /* Event sync (2026-10-07) */
+    QCheckBox* eventSyncCheck_ = nullptr;
+    QComboBox* eventSyncRangeCombo_ = nullptr;
 };

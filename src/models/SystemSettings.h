@@ -65,6 +65,17 @@ struct MaintenanceSettings {
     int expireVideoDays = 30;
     int minFreeSpaceGb = 5;
     bool deleteOldestWhenLowSpace = true;
+
+    /*
+     * Event sync (board -> this PC), driven by the settings page:
+     *   eventSyncEnabled   - start/pause.  Pausing stops the 1 Hz poll; everything
+     *                        already synced stays on disk.
+     *   eventSyncRangeDays - one-shot backfill window applied when the settings are
+     *                        confirmed: 1 = today, 7 = last week, 30 = last month,
+     *                        0 = everything.
+     */
+    bool eventSyncEnabled = true;
+    int eventSyncRangeDays = 7;
 };
 
 struct SystemSettings {
