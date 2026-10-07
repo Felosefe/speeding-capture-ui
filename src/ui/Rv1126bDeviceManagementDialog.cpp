@@ -507,6 +507,20 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
                 });
     }
     connect(boardPullButton_, &QPushButton::clicked, this, [this]() {
+        /*
+         * 2026-10-07：这个按钮现在驱动的是"资料包导出"（exportInFlight_），
+         * 所以停止必须停导出，而不是只停旧的 boardPullService_ —— 否则点了停止没反应，
+         * 再点一次还会重新弹确认框、再起一遍导出（两遍同时跑）。
+         */
+        if (exportInFlight_) {
+            exportInFlight_ = false;
+            if (currentExportApi_) currentExportApi_->cancelAll();
+            if (boardPullButton_) boardPullButton_->setText(QStringLiteral("开始拉取到本机"));
+            if (eventExportButton_) eventExportButton_->setEnabled(boardApi_ != nullptr);
+            if (boardPullStatus_) boardPullStatus_->setText(QStringLiteral("已停止拉取"));
+            if (eventExportStatus_) eventExportStatus_->setText(QStringLiteral("已停止拉取"));
+            return;
+        }
         if (boardPullService_ && boardPullService_->isRunning()) {
             boardPullService_->cancel();
             return;
