@@ -38,6 +38,12 @@ public:
     void setPaused(bool paused);
     void setSyncEnabled(bool enabled);
     bool syncEnabled() const;
+    /*
+     * Event-sync settings page: one-shot backfill of a time range across every
+     * device ("today / last week / last month / all"; 0 = all).  Does not delete
+     * anything locally and does not change the enable/disable state.
+     */
+    void syncRange(qint64 cutoffEpochMs);
     void requestEvidence(const VehicleEvent& event);
     void deleteLocalEvent(const VehicleEvent& event);
     void clearLocalHistory(const EventQuery& query);

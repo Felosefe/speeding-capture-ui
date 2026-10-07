@@ -212,6 +212,28 @@ void BoardEventSyncService::pollNow()
     scheduleNextPoll(0);
 }
 
+void BoardEventSyncService::syncRange(qint64 cutoffEpochMs)
+{
+    /*
+     * Range-limited backfill, driven by the event-sync settings page
+     * ("today / last week / last month / all"; 0 = all).
+     *
+     * It deliberately delegates to syncAllExisting(): the walk, the anchor handling
+     * and the busy/unavailable error reporting are all identical, only the stop
+     * condition differs - handleEventPage() ends the walk at the cutoff.
+     *
+     * The busy case must NOT arm the cutoff: syncAllExisting() reports the busy
+     * error itself, and an armed cutoff would then silently range-limit the next
+     * ordinary poll.
+     */
+    if (syncInFlight_ || markCurrentHeadInFlight_) {
+        syncAllExisting();
+        return;
+    }
+    rangeCutoffEpochMs_ = cutoffEpochMs > 0 ? cutoffEpochMs : 0;
+    syncAllExisting();
+}
+
 void BoardEventSyncService::syncAllExisting()
 {
     if (syncInFlight_ || markCurrentHeadInFlight_) {
@@ -402,7 +424,17 @@ void BoardEventSyncService::handleEventPage(int generation, ApiResult<EventPageD
     events.reserve(page.items.size());
 
     bool reachedStoredAnchor = false;
+    bool reachedRangeCutoff = false;
     for (const EventSummaryDto& summary : page.items) {
+        /*
+         * Range backfill (settings page).  The board returns events newest-first, so
+         * the first one older than the cutoff ends the walk; checking before the
+         * event is built means nothing outside the requested range is ever persisted.
+         */
+        if (rangeCutoffEpochMs_ > 0 && summary.eventTime.sourceEpochMs < rangeCutoffEpochMs_) {
+            reachedRangeCutoff = true;
+            break;
+        }
         VehicleEvent event = eventFromSummary(deviceId_, summary, observedEpochMs);
         if (!cycleHead_ && !isEmptyIdentity(event.identity)) {
             cycleHead_ = sortKeyFromEvent(event);
@@ -414,7 +446,8 @@ void BoardEventSyncService::handleEventPage(int generation, ApiResult<EventPageD
         }
     }
 
-    const bool shouldContinuePaging = page.hasMore && page.nextCursor.has_value() && !reachedStoredAnchor;
+    const bool shouldContinuePaging = page.hasMore && page.nextCursor.has_value() &&
+                                      !reachedStoredAnchor && !reachedRangeCutoff;
     const std::optional<QString> nextCursor = shouldContinuePaging ? page.nextCursor : std::nullopt;
 
     repository_->upsertEvents(
@@ -647,6 +680,12 @@ void BoardEventSyncService::completeCycle(int generation)
 
     syncInFlight_ = false;
     retryAttempt_ = 0;
+    /*
+     * The backfill range applies to one cycle only.  Leaving it armed would make
+     * every later ordinary poll stop at the old cutoff, i.e. the app would silently
+     * stop seeing events older than the range the user once picked.
+     */
+    rangeCutoffEpochMs_ = 0;
 
     if (manualFullSyncInFlight_) {
         manualFullSyncInFlight_ = false;

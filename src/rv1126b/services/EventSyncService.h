@@ -35,6 +35,19 @@ public:
     virtual int pollIntervalMs() const = 0;
     virtual void pollNow() = 0;
     virtual void syncAllExisting() = 0;
+    /*
+     * One-shot backfill limited to a time range: walk pages from the newest event
+     * backwards and stop as soon as an event older than cutoffEpochMs is reached.
+     * 0 means "no cutoff", i.e. everything - what syncAllExisting() does.
+     *
+     * This is cheap by construction: the board returns events newest-first, so the
+     * walk stops at the boundary instead of paging through the whole history.  The
+     * stored sync anchor still ends up at the current head, so the normal 1 Hz poll
+     * resumes incrementally and never re-scans the range.
+     *
+     * Used by the event-sync settings page: "today / last week / last month / all".
+     */
+    virtual void syncRange(qint64 cutoffEpochMs) = 0;
     virtual void markCurrentHeadAsSynced() = 0;
 
 signals:

@@ -31,6 +31,7 @@ public:
     int pollIntervalMs() const override;
     void pollNow() override;
     void syncAllExisting() override;
+    void syncRange(qint64 cutoffEpochMs) override;
     void markCurrentHeadAsSynced() override;
 
 private:
@@ -81,6 +82,11 @@ private:
     std::optional<SyncAnchor> loadedAnchor_;
     std::optional<EventSortKey> cycleHead_;
     QVector<VehicleEvent> pendingDetailRefresh_;
+    /*
+     * Backfill cutoff for the current cycle, in source epoch ms; 0 = no cutoff.
+     * Cleared at the end of every cycle so the normal poll is never range-limited.
+     */
+    qint64 rangeCutoffEpochMs_ = 0;
 };
 
 } // namespace rv1126b

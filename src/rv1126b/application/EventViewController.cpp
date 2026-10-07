@@ -155,6 +155,21 @@ void EventViewController::setSyncEnabled(bool enabled)
 
 bool EventViewController::syncEnabled() const { return syncEnabled_; }
 
+void EventViewController::syncRange(qint64 cutoffEpochMs)
+{
+    /*
+     * Settings page action: pull the requested time range once, from every device
+     * that is currently online.  A paused (syncEnabled_ == false) controller still
+     * honours an explicit one-shot request - the user asked for it by pressing the
+     * button - and the service goes back to its normal poll afterwards.
+     */
+    for (EventSyncService* service : std::as_const(syncServices_)) {
+        if (!service) continue;
+        if (sessionStates_.value(service->deviceId()) != DeviceSessionState::Online) continue;
+        service->syncRange(cutoffEpochMs);
+    }
+}
+
 void EventViewController::refreshRealtime(const EventQuery& query)
 {
     currentQuery_ = query;

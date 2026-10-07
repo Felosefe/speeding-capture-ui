@@ -138,6 +138,7 @@ public:
     int pollIntervalMs() const override { return interval_; }
     void pollNow() override { ++pollNowCount; }
     void syncAllExisting() override { ++syncAllCount; }
+    void syncRange(qint64 cutoffEpochMs) override { ++syncRangeCount; lastRangeCutoffEpochMs = cutoffEpochMs; }
     void markCurrentHeadAsSynced() override { ++markCurrentCount; }
     void change(const EventIdentity& identity) { emit eventChanged(identity); }
     QString id_;
@@ -147,6 +148,8 @@ public:
     int stopCount = 0;
     int pollNowCount = 0;
     int syncAllCount = 0;
+    int syncRangeCount = 0;
+    qint64 lastRangeCutoffEpochMs = -1;
     int markCurrentCount = 0;
 };
 
