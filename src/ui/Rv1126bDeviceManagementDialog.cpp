@@ -1065,74 +1065,18 @@ void Rv1126bDeviceManagementDialog::connectController()
                 applyTime(time);
                 globalMessage_->setText(QStringLiteral("设备校时成功"));
             });
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpConfigLoaded,
-            this, &Rv1126bDeviceManagementDialog::applyFtpConfig);
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpConfigRolledBack,
-            this, [this](const rv1126b::FtpConfigSnapshotDto&) { ftpStatus_->setText(QStringLiteral("FTP 配置已回滚")); });
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpActivationFinished,
-            this, [this](const rv1126b::FtpActivationResult& result) {
-                if (result.configSaved) clearPasswordEditors();
-                if (!result.configSaved) ftpStatus_->setText(QStringLiteral("FTP 配置未保存"));
-                else if (!result.autoEnabled) ftpStatus_->setText(QStringLiteral("FTP 配置已保存，但自动下发未开启；%1")
-                    .arg(result.error ? result.error->code : QStringLiteral("请检查控制写能力")));
-                else ftpStatus_->setText(QStringLiteral("FTP 配置已保存，并已启用 all_existing 自动下发"));
-                if (!result.newRevision.isEmpty()) {
-                    ftpRevision_ = result.newRevision;
-                    ftpRevisionLabel_->setText(QStringLiteral("revision：%1").arg(ftpRevision_));
-                }
-            });
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpControlLoaded,
-            this, &Rv1126bDeviceManagementDialog::applyFtpControl);
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpControlSaved,
-            this, [this](const rv1126b::FtpControlDto& control) {
-                applyFtpControl(control);
-                ftpStatus_->setText(control.enabled ? QStringLiteral("自动下发已启用")
-                                                    : QStringLiteral("自动下发已暂停；手工任务不受影响"));
-            });
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpRevisionConflict,
-            this, &Rv1126bDeviceManagementDialog::showRevisionConflict);
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpTasksLoaded,
-            this, &Rv1126bDeviceManagementDialog::applyTaskPage);
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpTaskLoaded,
-            this, &Rv1126bDeviceManagementDialog::applyTaskDetail);
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpTaskCreated,
-            this, [this](const rv1126b::FtpTaskDetailDto& task) {
-                selectedTaskId_ = task.summary.taskId;
-                applyTaskDetail(task);
-                taskPageIndex_ = 0;
-                taskPageCursors_ = {QString()};
-                controller_->listFtpTasks();
-            });
-    connect(controller_, &rv1126b::DeviceOperationsController::ftpTaskRetried,
-            this, [this](const rv1126b::FtpTaskDetailDto& task) {
-                if (!task.targets.isEmpty()) applyTaskDetail(task);
-                controller_->listFtpTasks(taskPageCursors_.at(taskPageIndex_).isEmpty()
-                                              ? std::nullopt
-                                              : std::optional<QString>(taskPageCursors_.at(taskPageIndex_)));
-            });
-    connect(controller_, &rv1126b::DeviceOperationsController::localFtpTaskSnapshotsLoaded,
-            this, &Rv1126bDeviceManagementDialog::applyLocalTaskSnapshots);
-    connect(controller_, &rv1126b::DeviceOperationsController::operationBusyChanged,
-            this, [this](const QString& operation, bool busy) {
-                if (operation == QStringLiteral("evidence.save")) {
-                    if (auto* button = findChild<QPushButton*>(QStringLiteral("saveEvidenceButton")))
-                        button->setEnabled(!busy);
-                }
-                if (operation == QStringLiteral("time.save"))
-                    syncTimeButton_->setEnabled(!busy && timeSetEnabled_);
-                if (operation == QStringLiteral("ftp.config.save")) {
-                    if (busy) saveFtpButton_->setEnabled(false);
-                    else validateFtpRowsInline();
-                }
-                if (operation == QStringLiteral("ftp.task.create")) createTaskButton_->setEnabled(!busy && deviceOnline_);
-                if (operation == QStringLiteral("ftp.task.retry")) retryTaskButton_->setEnabled(!busy && deviceOnline_
-                    && selectedTaskState_ == rv1126b::FtpTaskState::Failed);
-                if (operation == QStringLiteral("ftp.tasks.list")) {
-                    previousTasksButton_->setEnabled(!busy && taskPageIndex_ > 0);
-                    nextTasksButton_->setEnabled(!busy && nextTaskCursor_.has_value());
-                }
-                if (busy) globalMessage_->setText(QStringLiteral("操作进行中：%1").arg(operation));
-            });
+    /*
+     * 2026-10-07: the ISP / FTP-config / FTP-tasks pages were removed from this
+     * dialog, so their board callbacks are no longer bound here.  Binding callbacks
+     * to widgets of pages that no longer exist is what made a crash possible; the
+     * widgets themselves are removed in the next step of this cleanup.
+     *
+     * Dropped: ftpConfigLoaded, ftpConfigRolledBack, ftpActivationFinished,
+     * ftpControlLoaded, ftpControlSaved, ftpRevisionConflict, ftpTasksLoaded,
+     * ftpTaskLoaded, ftpTaskCreated, ftpTaskRetried, localFtpTaskSnapshotsLoaded
+     * and the operationBusyChanged handler (saveFtpButton_ / createTaskButton_ /
+     * retryTaskButton_ / previousTasksButton_ / nextTasksButton_).
+     */
 }
 
 void Rv1126bDeviceManagementDialog::showError(const QString& code, const QString& message)
