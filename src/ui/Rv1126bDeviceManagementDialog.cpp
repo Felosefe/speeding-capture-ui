@@ -389,7 +389,7 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     eventStorageSaveButton_ = new QPushButton(QStringLiteral("保存路径"), summary);
     eventSyncStatus_->setObjectName(QStringLiteral("eventSyncStatusLabel"));
     eventSyncStatus_->setWordWrap(true);
-    eventSyncModeLabel_->setText(QStringLiteral("应用端通过 HTTP 主动拉取板端 API，不依赖 FTP 和 Windows 被动端口。"));
+    eventSyncModeLabel_->setText(QStringLiteral("本机主动向板端拉取事件（HTTP API）；不需要 FTP，也不需要对方电脑开放端口。"));
     eventSyncRootLabel_->setText(QDir(currentEventStorageRoot()).filePath(QStringLiteral("rv1126b/events")));
     eventSyncStatus_->setText(eventSyncService_
                                   ? (eventSyncService_->isRunning()
@@ -536,9 +536,6 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
 
     auto* exportBox = new QGroupBox(QStringLiteral("生成用户可读事件资料包"), page);
     auto* exportLayout = new QGridLayout(exportBox);
-    eventSyncHostsEdit_ = new QLineEdit(exportBox);
-    eventSyncHostsEdit_->setPlaceholderText(QStringLiteral("例如：192.168.137.73, 192.168.137.74"));
-    eventSyncHostsEdit_->setText(deviceEndpointText_.section(QLatin1Char(':'), 0, 0));
     eventExportRangeCombo_ = new QComboBox(exportBox);
     eventExportRangeCombo_->addItem(QStringLiteral("拉取全部已有事件"), QStringLiteral("all"));
     eventExportRangeCombo_->addItem(QStringLiteral("仅拉取最新 100 条"), QStringLiteral("latest100"));
@@ -565,7 +562,6 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     eventExportStatus_->setObjectName(QStringLiteral("eventExportStatusLabel"));
     eventExportStatus_->setWordWrap(true);
     exportLayout->addWidget(new QLabel(QStringLiteral("板端 IP"), exportBox), 0, 0);
-    exportLayout->addWidget(eventSyncHostsEdit_, 0, 1, 1, 2);
     exportLayout->addWidget(new QLabel(QStringLiteral("范围"), exportBox), 1, 0);
     exportLayout->addWidget(eventExportRangeCombo_, 1, 1);
     exportLayout->addWidget(eventExportDaysSpin_, 1, 2);

@@ -136,6 +136,16 @@ void DetectionResultWriter::writeBundleNow(const VehicleEvent& event, const QStr
         [this, completed, written, key, captured, evidence](ApiResult<std::optional<EventDetailSnapshot>> result) {
             *completed = true;
             pendingIdentities_.remove(key);
+            /*
+             * 2026-10-07：同步兜底（下面那个 if）已经写过这一条时不要再写第二遍。
+             * 真实仓储的 loadDetail 是异步的，所以两个分支都会命中：先同步写一次拿到
+             * 立刻可用的结果，异步回调回来又写一次 —— 同一个事件的包被写两遍，两次都
+             * 会打开 records.csv 和同名包文件，交错写盘。拉取 951 条时表现为"写了 610 个
+             * 残缺包（每个只有 summary.txt）然后闪退"。
+             */
+            if (*written) {
+                return;
+            }
             *written = writeBundle(captured, result.isSuccess() ? result.value() : std::nullopt, evidence);
         });
     if (!*completed) {
