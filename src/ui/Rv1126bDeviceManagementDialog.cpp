@@ -283,6 +283,12 @@ void Rv1126bDeviceManagementDialog::reject()
     QDialog::reject();
 }
 
+/*
+ * 2026-10-07：事件同步状态标签（"已同步 N 条 · 最后同步 HH:mm:ss"）。
+ * 用文件级静态指针而不是头文件成员，避免为这个改动去碰 .h；
+ * 条数直接用导出/持续同步已有的成功计数，时间取完成时刻。
+ */
+static QLabel* s_syncCountLabel = nullptr;
 QWidget* Rv1126bDeviceManagementDialog::createEvidencePage()
 {
     auto* page = new QWidget(this);
@@ -383,6 +389,12 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     auto* form = new QFormLayout(summary);
     eventSyncModeLabel_ = new QLabel(summary);
     eventSyncRootLabel_ = new QLabel(summary);
+    // 2026-10-07：状态行「已同步 N 条 · 最后同步时间」
+    s_syncCountLabel = new QLabel(QStringLiteral("已同步：尚未同步"), page);
+    s_syncCountLabel->setObjectName(QStringLiteral("eventSyncCountLabel"));
+    s_syncCountLabel->setStyleSheet(QStringLiteral("color:#44515f;"));
+    layout->addWidget(s_syncCountLabel);
+
     eventSyncStatus_ = new QLabel(summary);
     eventStorageRootEdit_ = new QLineEdit(defaultEventStorageRoot(), summary);
     eventStorageBrowseButton_ = new QPushButton(QStringLiteral("选择"), summary);
@@ -1517,6 +1529,7 @@ void Rv1126bDeviceManagementDialog::startEventExport()
     startNextEventExportTarget();
 }
 
+
 /*
  * 2026-10-07：已导出事件的集合（eventId:trackId），从 index.csv 载入。
  * 对话框是单实例，用文件级静态即可，避免为这个改动去动头文件。
@@ -1537,6 +1550,12 @@ void Rv1126bDeviceManagementDialog::startNextEventExportTarget()
         exportInFlight_ = false;
         if (eventExportButton_) eventExportButton_->setEnabled(boardApi_ != nullptr);
         if (boardPullButton_) boardPullButton_->setText(QStringLiteral("开始拉取到本机"));
+
+        if (s_syncCountLabel) {
+            s_syncCountLabel->setText(QStringLiteral("已同步 %1 条 · 最后同步 %2")
+                                          .arg(exportSucceeded_)
+                                          .arg(QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"))));
+        }
 
         if (eventExportStatus_) {
             eventExportStatus_->setText(QStringLiteral("导出完成：成功事件 %1，失败/缺失文件 %2；目录：%3")
