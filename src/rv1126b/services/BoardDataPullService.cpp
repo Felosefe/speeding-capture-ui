@@ -151,7 +151,7 @@ void BoardDataPullService::handlePage(ApiResult<EventPageDto> result)
         }
         hasCursor_ = false;
         cursor_.clear();
-        processNextEvent();
+        QMetaObject::invokeMethod(this, [this]() { processNextEvent(); }, Qt::QueuedConnection);  // queued: the repository calls back synchronously, direct calls would recurse per event
     });
 }
 
@@ -175,7 +175,7 @@ void BoardDataPullService::processNextEvent()
             if (!result.isSuccess() || !result.value().has_value()) {
                 failedCount_++;
                 emit progress(seenCount_, writtenCount_, failedCount_);
-                processNextEvent();
+                QMetaObject::invokeMethod(this, [this]() { processNextEvent(); }, Qt::QueuedConnection);  // queued: the repository calls back synchronously, direct calls would recurse per event
                 return;
             }
             const VehicleEvent event = *result.value();
@@ -189,7 +189,7 @@ void BoardDataPullService::processNextEvent()
                 ++failedCount_;
             }
             emit progress(seenCount_, writtenCount_, failedCount_);
-            processNextEvent();
+            QMetaObject::invokeMethod(this, [this]() { processNextEvent(); }, Qt::QueuedConnection);  // queued: the repository calls back synchronously, direct calls would recurse per event
         });
 }
 
