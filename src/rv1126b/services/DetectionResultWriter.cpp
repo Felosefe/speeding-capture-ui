@@ -196,14 +196,18 @@ bool DetectionResultWriter::writeBundle(const VehicleEvent& event,
                                         const QString& evidencePath)
 {
     const QDateTime when = eventLocalTime(event);
-    const QString plate = event.plateText.trimmed().isEmpty()
-                              ? QStringLiteral("无牌")
-                              : sanitizeSegment(event.plateText, QStringLiteral("无牌"));
     const QString deviceId = sanitizeSegment(event.identity.deviceId, QStringLiteral("device"));
     const QString dayFolder = when.toString(QStringLiteral("yyyy-MM-dd"));
-    const QString eventFolder = QStringLiteral("%1_%2_event%3_track%4")
-                                    .arg(when.toString(QStringLiteral("yyyyMMdd_HHmmss")),
-                                         plate)
+    /*
+     * 2026-10-07: the event folder name must be STABLE across runs, otherwise a
+     * repeated sync/pull can never recognise "already written" and re-creates the
+     * bundle every time under a new name.  The plate used to be part of the name,
+     * but plate text comes from OCR and can change between runs (unrecognised first,
+     * recognised later), so it must NOT be part of the key.  It is still written
+     * inside summary.txt.
+     */
+    const QString eventFolder = QStringLiteral("%1_event%2_track%3")
+                                    .arg(when.toString(QStringLiteral("yyyyMMdd_HHmmss")))
                                     .arg(event.identity.eventId)
                                     .arg(event.identity.trackId);
 
