@@ -4,14 +4,11 @@
 #include "../rv1126b/services/DetectionResultWriter.h"
 
 #include "../rv1126b/ports/IBoardApiClient.h"
-#include "../rv1126b/services/EmbeddedFtpReceiveServer.h"
 #include "../rv1126b/services/EventSyncService.h"
 
-#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
-#include <QDateTimeEdit>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
@@ -20,26 +17,19 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
-#include <QHeaderView>
-#include <QHostAddress>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QMessageBox>
-#include <QNetworkInterface>
 #include <QPushButton>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
-#include <QStandardPaths>
 #include <QSpinBox>
 #include <QTabWidget>
-#include <QTableWidget>
 #include <QTextStream>
 #include <QTimer>
 #include <QTimeZone>
-#include <QUuid>
 #include <QVBoxLayout>
 
 namespace {
@@ -56,26 +46,6 @@ QString timeQualityText(rv1126b::TimeQuality quality, const QString& raw)
     case TimeQuality::Unknown: return QStringLiteral("未知：%1").arg(raw);
     }
     return QStringLiteral("未知");
-}
-
-QString taskStateText(rv1126b::FtpTaskState state, const QString& raw = {})
-{
-    using rv1126b::FtpTaskState;
-    switch (state) {
-    case FtpTaskState::Queued: return QStringLiteral("等待执行");
-    case FtpTaskState::Running: return QStringLiteral("执行中");
-    case FtpTaskState::Done: return QStringLiteral("完成");
-    case FtpTaskState::Failed: return QStringLiteral("失败");
-    case FtpTaskState::Unknown: return QStringLiteral("未知%1").arg(raw.isEmpty() ? QString() : QStringLiteral("：%1").arg(raw));
-    }
-    return QStringLiteral("未知");
-}
-
-QTableWidgetItem* item(const QString& text)
-{
-    auto* value = new QTableWidgetItem(text);
-    value->setFlags(value->flags() & ~Qt::ItemIsEditable);
-    return value;
 }
 
 QString epochText(qint64 epochMs, Qt::TimeSpec spec)
@@ -114,13 +84,6 @@ QString jsonString(const QJsonObject& object, const QString& key, const QString&
     return value.isString() ? value.toString() : fallback;
 }
 
-QString nestedJsonString(const QJsonObject& object, const QString& objectKey, const QString& key)
-{
-    const QJsonValue nested = object.value(objectKey);
-    if (!nested.isObject()) return {};
-    return jsonString(nested.toObject(), key);
-}
-
 bool writeTextFile(const QString& path, const QString& text)
 {
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
@@ -133,46 +96,6 @@ bool writeTextFile(const QString& path, const QString& text)
 }
 
 } // namespace
-
-// 板端错误码 → 现场能看懂的中文。以前直接显示 error.message，而 codec 只在 HTTP 400 时
-// 保留板端报文，403/405/500 一律变成 "Board request failed with HTTP status 403."，
-// 用户看不到真正原因（配置写入被关掉、ISP 读取失败等）。
-QString boardErrorText(const rv1126b::ApiError& error)
-{
-    const QString code = error.code;
-    if (code == QStringLiteral("config_write_disabled")) {
-        return QStringLiteral("板端已关闭配置写入（APP_API_CONFIG_WRITE_ENABLED=0），请先在板端开启后再试");
-    }
-    if (code == QStringLiteral("isp_config_unavailable")) {
-        return QStringLiteral("板端无法读取图像配置");
-    }
-    if (code == QStringLiteral("isp_current_unavailable")) {
-        return QStringLiteral("板端无法读取当前运行中的图像参数");
-    }
-    if (code == QStringLiteral("isp_config_write_failed")) {
-        return QStringLiteral("板端写入图像配置失败");
-    }
-    if (code == QStringLiteral("config_revision_conflict")) {
-        return QStringLiteral("配置已被他处修改，请先重新读取再保存");
-    }
-    if (code == QStringLiteral("time_set_disabled")) {
-        return QStringLiteral("板端已关闭校时功能");
-    }
-    if (code == QStringLiteral("ftp_config_write_disabled")) {
-        return QStringLiteral("板端已关闭 FTP 配置写入");
-    }
-    if (code == QStringLiteral("ftp_task_write_disabled")) {
-        return QStringLiteral("板端已关闭 FTP 任务创建");
-    }
-    const QString message = error.message;
-    if (code.isEmpty()) {
-        return message.isEmpty() ? QStringLiteral("未知错误") : message;
-    }
-    if (message.isEmpty()) {
-        return QStringLiteral("板端返回错误（%1）").arg(code);
-    }
-    return QStringLiteral("%1（%2）").arg(message, code);
-}
 
 Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     const QString& deviceId,
@@ -206,7 +129,6 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     , storageRootPath_(storageRootPath)
     , deviceEndpointText_(deviceEndpointText)
     , detectionPull_(detectionPull)
-    , taskRefreshTimer_(new QTimer(this))
     , deviceOnline_(deviceOnline)
 {
     setObjectName(QStringLiteral("rv1126bDeviceManagementDialog"));
@@ -229,17 +151,6 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
      * FTP 配置、FTP 历史任务一起删掉了（那几页是乱写的）。
      */
     tabs_->addTab(createEventSyncPage(), QStringLiteral("事件同步"));
-    /*
-     * 2026-10-07: the ISP / FTP-config / FTP-tasks pages were removed from the UI
-     * at the user's request. Their widgets are still constructed (and deliberately
-     * NOT added to tabs_) because connectController() binds board callbacks to them
-     * and the constructor calls controller_->loadAll(); a callback writing into a
-     * nullptr widget crashes this dialog. Removing the widgets means also removing
-     * those bindings - that cleanup is a separate step.
-     */
-    createIspPage();
-    createFtpConfigPage();
-    createFtpTasksPage();
     tabs_->setCurrentIndex(static_cast<int>(initialPage));
     layout->addWidget(tabs_, 1);
 
@@ -247,9 +158,6 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
-    taskRefreshTimer_->setInterval(2000);
-    connect(taskRefreshTimer_, &QTimer::timeout, this, &Rv1126bDeviceManagementDialog::refreshTasks);
-    connect(tabs_, &QTabWidget::currentChanged, this, [this]() { updateTaskRefreshState(); });
     connectController();
 
     if (!controller_) {
@@ -264,21 +172,17 @@ Rv1126bDeviceManagementDialog::Rv1126bDeviceManagementDialog(
     if (deviceOnline_) {
         controller_->loadAll();
     } else {
-        globalMessage_->setText(QStringLiteral("设备离线：显示本地 FTP 任务快照；创建、重试和自动刷新已禁用"));
-        controller_->loadLocalFtpTaskSnapshots();
+        globalMessage_->setText(QStringLiteral("设备离线：无法读取板端配置，事件同步需要设备在线"));
     }
-    updateTaskRefreshState();
 }
 
 Rv1126bDeviceManagementDialog::~Rv1126bDeviceManagementDialog()
 {
-    taskRefreshTimer_->stop();
     if (controller_) controller_->cancelPending();
 }
 
 void Rv1126bDeviceManagementDialog::reject()
 {
-    taskRefreshTimer_->stop();
     if (controller_) controller_->cancelPending();
     QDialog::reject();
 }
@@ -714,338 +618,6 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     return page;
 }
 
-QWidget* Rv1126bDeviceManagementDialog::createIspPage()
-{
-    auto* page = new QWidget(this);
-    auto* layout = new QVBoxLayout(page);
-
-    auto* box = new QGroupBox(QStringLiteral("开机默认图像参数"), page);
-    auto* form = new QFormLayout(box);
-    ispStatus_ = new QLabel(QStringLiteral("未读取"), box);
-    ispStatus_->setWordWrap(true);
-    ispCurrentLabel_ = new QLabel(QStringLiteral("-"), box);
-    ispCurrentLabel_->setWordWrap(true);
-    ispPersistedLabel_ = new QLabel(QStringLiteral("-"), box);
-    ispPersistedLabel_->setWordWrap(true);
-    form->addRow(QStringLiteral("状态"), ispStatus_);
-    form->addRow(QStringLiteral("当前运行"), ispCurrentLabel_);
-    form->addRow(QStringLiteral("开机默认"), ispPersistedLabel_);
-    layout->addWidget(box);
-
-    auto* hint = new QLabel(QStringLiteral(
-        "这一页只是把相机当前运行中的图像参数记下来当「开机默认」，本身不会去调曝光。"
-        "要改画面请先在相机网页端或调试工具里调好，再回到这里点「保存当前为开机默认」。"
-        "保存是写在板端配置里的，要重启相机服务或断电重启才会套用——重启前画面不会变。"
-        "板端若关闭了配置写入，保存按钮会是灰的。"), page);
-    hint->setWordWrap(true);
-    hint->setStyleSheet(QStringLiteral("color:#44515f;"));
-    layout->addWidget(hint);
-
-    auto* row = new QHBoxLayout();
-    ispRefreshButton_ = new QPushButton(QStringLiteral("重新读取"), page);
-    ispSaveCurrentButton_ = new QPushButton(QStringLiteral("保存当前为开机默认"), page);
-    ispClearButton_ = new QPushButton(QStringLiteral("取消开机默认覆盖"), page);
-    ispClearButton_->setToolTip(QStringLiteral("取消后开机不再套用这组参数；已写入板端配置的当前值不会被还原"));
-    row->addWidget(ispRefreshButton_);
-    row->addWidget(ispSaveCurrentButton_);
-    row->addWidget(ispClearButton_);
-    row->addStretch();
-    layout->addLayout(row);
-    layout->addStretch();
-
-    /*
-     * 2026-10-07: self-connects of the removed ISP / FTP-config / FTP-tasks pages
-     * are gone (cleanup step 2).  The widgets still exist and are removed in step 3.
-     */
-    QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::refreshIspConfig);
-    return page;
-}
-
-QWidget* Rv1126bDeviceManagementDialog::createFtpConfigPage()
-{
-    auto* page = new QWidget(this);
-    auto* layout = new QVBoxLayout(page);
-    ftpRevisionLabel_ = new QLabel(QStringLiteral("revision：未读取"), page);
-    ftpRevisionLabel_->setObjectName(QStringLiteral("ftpRevisionLabel"));
-    layout->addWidget(ftpRevisionLabel_);
-
-    auto* receiver = new QGroupBox(QStringLiteral("本机 FTP 接收服务"), page);
-    receiver->setObjectName(QStringLiteral("localFtpReceiverGroup"));
-    auto* receiverLayout = new QGridLayout(receiver);
-    localFtpRootEdit_ = new QLineEdit(receiver);
-    if (localFtpRootPath_.trimmed().isEmpty()) {
-        const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        localFtpRootEdit_->setText(QDir(documents.isEmpty() ? QDir::homePath() : documents)
-                                       .filePath(QStringLiteral("RV1126B_Events")));
-    } else {
-        localFtpRootEdit_->setText(localFtpRootPath_);
-    }
-    localFtpRootEdit_->setObjectName(QStringLiteral("localFtpRootEdit"));
-    auto* browse = new QPushButton(QStringLiteral("选择"), receiver);
-    connect(browse, &QPushButton::clicked, this, [this]() {
-        const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("选择接收目录"), localFtpRootEdit_->text());
-        if (!path.isEmpty()) localFtpRootEdit_->setText(path);
-    });
-    localFtpHostEdit_ = new QLineEdit(defaultLocalFtpAddress(), receiver);
-    localFtpHostEdit_->setObjectName(QStringLiteral("localFtpHostEdit"));
-    localFtpTargetIdEdit_ = new QLineEdit(defaultLocalFtpTargetId(localFtpHostEdit_->text()), receiver);
-    localFtpTargetIdEdit_->setObjectName(QStringLiteral("localFtpTargetIdEdit"));
-    localFtpPortSpin_ = new QSpinBox(receiver);
-    localFtpPortSpin_->setRange(1, 65535);
-    localFtpPortSpin_->setValue(21210);
-    localFtpPortSpin_->setObjectName(QStringLiteral("localFtpPortSpin"));
-    localFtpPassiveStartSpin_ = new QSpinBox(receiver);
-    localFtpPassiveStartSpin_->setRange(0, 65535);
-    localFtpPassiveStartSpin_->setValue(21211);
-    localFtpPassiveStartSpin_->setObjectName(QStringLiteral("localFtpPassiveStartSpin"));
-    localFtpPassiveEndSpin_ = new QSpinBox(receiver);
-    localFtpPassiveEndSpin_->setRange(0, 65535);
-    localFtpPassiveEndSpin_->setValue(21230);
-    localFtpPassiveEndSpin_->setObjectName(QStringLiteral("localFtpPassiveEndSpin"));
-    localFtpUserEdit_ = new QLineEdit(QStringLiteral("upload"), receiver);
-    localFtpUserEdit_->setObjectName(QStringLiteral("localFtpUserEdit"));
-    localFtpPasswordEdit_ = new QLineEdit(QUuid::createUuid().toString(QUuid::WithoutBraces).remove(QLatin1Char('-')).left(16), receiver);
-    localFtpPasswordEdit_->setObjectName(QStringLiteral("localFtpPasswordEdit"));
-    localFtpPasswordEdit_->setEchoMode(QLineEdit::Password);
-    localFtpStartButton_ = new QPushButton(QStringLiteral("启动接收服务"), receiver);
-    localFtpStartButton_->setObjectName(QStringLiteral("localFtpStartButton"));
-    localFtpStopButton_ = new QPushButton(QStringLiteral("停止"), receiver);
-    localFtpStopButton_->setObjectName(QStringLiteral("localFtpStopButton"));
-    auto* fillTarget = new QPushButton(QStringLiteral("填入本机目标"), receiver);
-    fillTarget->setObjectName(QStringLiteral("localFtpFillTargetButton"));
-    auto* saveTarget = new QPushButton(QStringLiteral("一键启动接收并配置板端"), receiver);
-    saveTarget->setObjectName(QStringLiteral("localFtpSaveTargetButton"));
-    localFtpStatus_ = new QLabel(receiver);
-    localFtpStatus_->setObjectName(QStringLiteral("localFtpStatusLabel"));
-    localFtpStatus_->setWordWrap(true);
-    connect(fillTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(false); });
-    connect(saveTarget, &QPushButton::clicked, this, [this]() { applyLocalFtpTarget(true); });
-    receiverLayout->addWidget(new QLabel(QStringLiteral("保存目录"), receiver), 0, 0);
-    receiverLayout->addWidget(localFtpRootEdit_, 0, 1, 1, 4);
-    receiverLayout->addWidget(browse, 0, 5);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("本机 IP"), receiver), 1, 0);
-    receiverLayout->addWidget(localFtpHostEdit_, 1, 1);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("端口"), receiver), 1, 2);
-    receiverLayout->addWidget(localFtpPortSpin_, 1, 3);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("被动端口"), receiver), 1, 4);
-    auto* passiveRow = new QWidget(receiver);
-    auto* passiveLayout = new QHBoxLayout(passiveRow);
-    passiveLayout->setContentsMargins(0, 0, 0, 0);
-    passiveLayout->addWidget(localFtpPassiveStartSpin_);
-    passiveLayout->addWidget(new QLabel(QStringLiteral("-"), passiveRow));
-    passiveLayout->addWidget(localFtpPassiveEndSpin_);
-    receiverLayout->addWidget(passiveRow, 1, 5);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("用户"), receiver), 2, 0);
-    receiverLayout->addWidget(localFtpUserEdit_, 2, 1);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("密码"), receiver), 2, 2);
-    receiverLayout->addWidget(localFtpPasswordEdit_, 2, 3);
-    receiverLayout->addWidget(localFtpStartButton_, 2, 4);
-    receiverLayout->addWidget(localFtpStopButton_, 2, 5);
-    receiverLayout->addWidget(new QLabel(QStringLiteral("目标 ID"), receiver), 3, 0);
-    receiverLayout->addWidget(localFtpTargetIdEdit_, 3, 1);
-    receiverLayout->addWidget(fillTarget, 4, 0);
-    receiverLayout->addWidget(saveTarget, 4, 1);
-    receiverLayout->addWidget(localFtpStatus_, 4, 2, 1, 4);
-    layout->addWidget(receiver);
-    updateLocalFtpReceiverState();
-
-    auto* globals = new QGroupBox(QStringLiteral("全局参数"), page);
-    auto* grid = new QGridLayout(globals);
-    const auto spin = [globals](int max = 86400) {
-        auto* value = new QSpinBox(globals);
-        value->setRange(0, max);
-        return value;
-    };
-    retryMaxSpin_ = spin(1000);
-    retryIntervalSpin_ = spin();
-    connectTimeoutSpin_ = spin();
-    transferTimeoutSpin_ = spin();
-    scanIntervalSpin_ = spin();
-    grid->addWidget(new QLabel(QStringLiteral("最大重试"), globals), 0, 0);
-    grid->addWidget(retryMaxSpin_, 0, 1);
-    grid->addWidget(new QLabel(QStringLiteral("重试间隔(s)"), globals), 0, 2);
-    grid->addWidget(retryIntervalSpin_, 0, 3);
-    grid->addWidget(new QLabel(QStringLiteral("连接超时(s)"), globals), 1, 0);
-    grid->addWidget(connectTimeoutSpin_, 1, 1);
-    grid->addWidget(new QLabel(QStringLiteral("传输超时(s)"), globals), 1, 2);
-    grid->addWidget(transferTimeoutSpin_, 1, 3);
-    grid->addWidget(new QLabel(QStringLiteral("扫描间隔(s)"), globals), 2, 0);
-    grid->addWidget(scanIntervalSpin_, 2, 1);
-    layout->addWidget(globals);
-
-    ftpTargetsTable_ = new QTableWidget(0, 10, page);
-    ftpTargetsTable_->setObjectName(QStringLiteral("ftpTargetsTable"));
-    ftpTargetsTable_->setHorizontalHeaderLabels({QStringLiteral("启用"), QStringLiteral("ID"),
-        QStringLiteral("IPv4"), QStringLiteral("端口"), QStringLiteral("用户"),
-        QStringLiteral("密码处理"), QStringLiteral("新密码"), QStringLiteral("远端目录"),
-        QStringLiteral("被动"), QStringLiteral("已有密码")});
-    ftpTargetsTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    ftpTargetsTable_->horizontalHeader()->setStretchLastSection(true);
-    layout->addWidget(ftpTargetsTable_, 1);
-
-    auto* targetButtons = new QHBoxLayout;
-    auto* add = new QPushButton(QStringLiteral("添加目标"), page);
-    add->setObjectName(QStringLiteral("addFtpTargetButton"));
-    auto* remove = new QPushButton(QStringLiteral("删除目标"), page);
-    connect(add, &QPushButton::clicked, this, [this]() {
-        if (ftpTargetsTable_->rowCount() >= rv1126b::DeviceOperationsController::MaxFtpTargets) {
-            showError(QStringLiteral("too_many_ftp_targets"), QStringLiteral("FTP 目标最多 8 个"));
-            return;
-        }
-        addFtpTargetRow();
-    });
-    connect(remove, &QPushButton::clicked, this, [this]() {
-        const int row = ftpTargetsTable_->currentRow();
-        if (row >= 0) ftpTargetsTable_->removeRow(row);
-    });
-    targetButtons->addWidget(add);
-    targetButtons->addWidget(remove);
-    targetButtons->addStretch();
-    layout->addLayout(targetButtons);
-
-    auto* control = new QGroupBox(QStringLiteral("自动下发控制"), page);
-    auto* controlLayout = new QHBoxLayout(control);
-    autoEnabledCheck_ = new QCheckBox(QStringLiteral("启用"), control);
-    autoScopeCombo_ = new QComboBox(control);
-    autoScopeCombo_->addItem(QStringLiteral("仅新事件"), static_cast<int>(rv1126b::FtpControlScope::NewEventsOnly));
-    autoScopeCombo_->addItem(QStringLiteral("包含已有事件"), static_cast<int>(rv1126b::FtpControlScope::AllExisting));
-    auto* applyControl = new QPushButton(QStringLiteral("应用控制"), control);
-    connect(applyControl, &QPushButton::clicked, this, [this]() {
-        const auto scope = static_cast<rv1126b::FtpControlScope>(autoScopeCombo_->currentData().toInt());
-        controller_->updateFtpControl(autoEnabledCheck_->isChecked(), scope);
-    });
-    controlLayout->addWidget(autoEnabledCheck_);
-    controlLayout->addWidget(autoScopeCombo_);
-    controlLayout->addWidget(applyControl);
-    controlLayout->addStretch();
-    layout->addWidget(control);
-
-    ftpStatus_ = new QLabel(page);
-    ftpStatus_->setObjectName(QStringLiteral("ftpStatusLabel"));
-    ftpStatus_->setWordWrap(true);
-    layout->addWidget(ftpStatus_);
-    auto* actions = new QHBoxLayout;
-    auto* reload = new QPushButton(QStringLiteral("重新读取"), page);
-    saveFtpButton_ = new QPushButton(QStringLiteral("保存并启用全部事件自动下发"), page);
-    saveFtpButton_->setObjectName(QStringLiteral("saveAndEnableFtpButton"));
-    auto* rollback = new QPushButton(QStringLiteral("回滚最近配置"), page);
-    connect(reload, &QPushButton::clicked, controller_, [this]() {
-        if (controller_) { controller_->loadFtpConfig(); controller_->loadFtpControl(); }
-    });
-    connect(rollback, &QPushButton::clicked, this, [this]() {
-        if (QMessageBox::question(this, QStringLiteral("回滚 FTP 配置"),
-                                  QStringLiteral("确认恢复板端最近一次 FTP 配置备份？")) == QMessageBox::Yes)
-            controller_->rollbackFtpConfig();
-    });
-    actions->addWidget(reload);
-    actions->addWidget(saveFtpButton_);
-    actions->addWidget(rollback);
-    actions->addStretch();
-    layout->addLayout(actions);
-    return page;
-}
-
-QWidget* Rv1126bDeviceManagementDialog::createFtpTasksPage()
-{
-    auto* page = new QWidget(this);
-    auto* layout = new QVBoxLayout(page);
-    auto* createGroup = new QGroupBox(QStringLiteral("创建 UTC [start,end) 历史任务"), page);
-    auto* createLayout = new QGridLayout(createGroup);
-    taskStartEdit_ = new QDateTimeEdit(QDateTime::currentDateTime().addDays(-1), createGroup);
-    taskEndEdit_ = new QDateTimeEdit(QDateTime::currentDateTime(), createGroup);
-    taskStartEdit_->setCalendarPopup(true);
-    taskEndEdit_->setCalendarPopup(true);
-    taskStartEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    taskEndEdit_->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    taskTargets_ = new QListWidget(createGroup);
-    taskTargets_->setObjectName(QStringLiteral("ftpTaskTargets"));
-    taskTargets_->setMaximumHeight(90);
-    createTaskButton_ = new QPushButton(QStringLiteral("创建历史任务"), createGroup);
-    createTaskButton_->setObjectName(QStringLiteral("createFtpTaskButton"));
-    connect(createTaskButton_, &QPushButton::clicked, this, &Rv1126bDeviceManagementDialog::createTask);
-    createLayout->addWidget(new QLabel(QStringLiteral("本地开始时间"), createGroup), 0, 0);
-    createLayout->addWidget(taskStartEdit_, 0, 1);
-    createLayout->addWidget(new QLabel(QStringLiteral("本地结束时间（不含）"), createGroup), 0, 2);
-    createLayout->addWidget(taskEndEdit_, 0, 3);
-    createLayout->addWidget(new QLabel(QStringLiteral("已启用目标"), createGroup), 1, 0);
-    createLayout->addWidget(taskTargets_, 1, 1, 1, 3);
-    createLayout->addWidget(createTaskButton_, 2, 0);
-    layout->addWidget(createGroup);
-
-    taskTable_ = new QTableWidget(0, 5, page);
-    taskTable_->setObjectName(QStringLiteral("ftpTaskTable"));
-    taskTable_->setHorizontalHeaderLabels({QStringLiteral("任务 ID"), QStringLiteral("状态"),
-        QStringLiteral("UTC 范围"), QStringLiteral("创建时间"), QStringLiteral("目标")});
-    taskTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    taskTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-    taskTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    taskTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    taskTable_->horizontalHeader()->setStretchLastSection(true);
-    connect(taskTable_, &QTableWidget::itemSelectionChanged, this, [this]() {
-        const int row = taskTable_->currentRow();
-        if (row < 0 || !taskTable_->item(row, 0)) return;
-        selectedTaskId_ = taskTable_->item(row, 0)->data(Qt::UserRole).toString();
-        selectedTaskState_ = static_cast<rv1126b::FtpTaskState>(taskTable_->item(row, 1)->data(Qt::UserRole).toInt());
-        retryTaskButton_->setEnabled(selectedTaskState_ == rv1126b::FtpTaskState::Failed);
-        if (deviceOnline_) {
-            controller_->loadFtpTask(selectedTaskId_);
-        } else {
-            for (const auto& task : localTaskSnapshots_) {
-                if (task.taskId == selectedTaskId_) {
-                    applyLocalTaskDetail(task);
-                    break;
-                }
-            }
-        }
-    });
-    layout->addWidget(taskTable_, 1);
-
-    auto* paging = new QHBoxLayout;
-    previousTasksButton_ = new QPushButton(QStringLiteral("上一页"), page);
-    nextTasksButton_ = new QPushButton(QStringLiteral("下一页"), page);
-    taskPageLabel_ = new QLabel(QStringLiteral("第 1 页"), page);
-    previousTasksButton_->setEnabled(false);
-    nextTasksButton_->setEnabled(false);
-    connect(previousTasksButton_, &QPushButton::clicked, this, [this]() {
-        if (taskPageIndex_ <= 0) return;
-        --taskPageIndex_;
-        controller_->listFtpTasks(taskPageCursors_.at(taskPageIndex_).isEmpty()
-                                      ? std::nullopt
-                                      : std::optional<QString>(taskPageCursors_.at(taskPageIndex_)));
-    });
-    connect(nextTasksButton_, &QPushButton::clicked, this, [this]() {
-        if (!nextTaskCursor_) return;
-        ++taskPageIndex_;
-        if (taskPageCursors_.size() <= taskPageIndex_) taskPageCursors_.append(*nextTaskCursor_);
-        else taskPageCursors_[taskPageIndex_] = *nextTaskCursor_;
-        controller_->listFtpTasks(*nextTaskCursor_);
-    });
-    paging->addWidget(previousTasksButton_);
-    paging->addWidget(nextTasksButton_);
-    paging->addWidget(taskPageLabel_);
-    paging->addStretch();
-    layout->addLayout(paging);
-
-    taskDetailTable_ = new QTableWidget(0, 9, page);
-    taskDetailTable_->setObjectName(QStringLiteral("ftpTaskDetailTable"));
-    taskDetailTable_->setHorizontalHeaderLabels({QStringLiteral("目标"), QStringLiteral("状态"),
-        QStringLiteral("总数"), QStringLiteral("等待"), QStringLiteral("上传中"),
-        QStringLiteral("成功"), QStringLiteral("失败"), QStringLiteral("尝试"), QStringLiteral("最后错误")});
-    taskDetailTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    taskDetailTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    taskDetailTable_->horizontalHeader()->setStretchLastSection(true);
-    layout->addWidget(taskDetailTable_);
-    retryTaskButton_ = new QPushButton(QStringLiteral("重试失败任务"), page);
-    retryTaskButton_->setObjectName(QStringLiteral("retryFtpTaskButton"));
-    retryTaskButton_->setEnabled(false);
-    connect(retryTaskButton_, &QPushButton::clicked, this, [this]() {
-        if (!selectedTaskId_.isEmpty() && selectedTaskState_ == rv1126b::FtpTaskState::Failed)
-            controller_->retryFtpTask(selectedTaskId_);
-    });
-    layout->addWidget(retryTaskButton_, 0, Qt::AlignLeft);
-    return page;
-}
-
 void Rv1126bDeviceManagementDialog::connectController()
 {
     if (!controller_) return;
@@ -1068,16 +640,11 @@ void Rv1126bDeviceManagementDialog::connectController()
                 globalMessage_->setText(QStringLiteral("设备校时成功"));
             });
     /*
-     * 2026-10-07: the ISP / FTP-config / FTP-tasks pages were removed from this
-     * dialog, so their board callbacks are no longer bound here.  Binding callbacks
-     * to widgets of pages that no longer exist is what made a crash possible; the
-     * widgets themselves are removed in the next step of this cleanup.
-     *
-     * Dropped: ftpConfigLoaded, ftpConfigRolledBack, ftpActivationFinished,
-     * ftpControlLoaded, ftpControlSaved, ftpRevisionConflict, ftpTasksLoaded,
-     * ftpTaskLoaded, ftpTaskCreated, ftpTaskRetried, localFtpTaskSnapshotsLoaded
-     * and the operationBusyChanged handler (saveFtpButton_ / createTaskButton_ /
-     * retryTaskButton_ / previousTasksButton_ / nextTasksButton_).
+     * 2026-10-07: the ISP / FTP-config / FTP-tasks pages and their board callbacks
+     * (ftpConfigLoaded, ftpConfigRolledBack, ftpActivationFinished, ftpControlLoaded,
+     * ftpControlSaved, ftpRevisionConflict, ftpTasksLoaded, ftpTaskLoaded,
+     * ftpTaskCreated, ftpTaskRetried, localFtpTaskSnapshotsLoaded,
+     * operationBusyChanged) are gone.  Nothing in this dialog binds to them anymore.
      */
 }
 
@@ -1114,386 +681,6 @@ void Rv1126bDeviceManagementDialog::applyTime(const rv1126b::TimeStatusDto& time
     timeSetEnabled_ = time.timeSetEnabled;
     timeWriteLabel_->setText(timeSetEnabled_ ? QStringLiteral("已开放") : QStringLiteral("未开放"));
     syncTimeButton_->setEnabled(timeSetEnabled_);
-}
-
-void Rv1126bDeviceManagementDialog::applyFtpConfig(const rv1126b::FtpConfigSnapshotDto& config)
-{
-    ftpRevision_ = config.revision;
-    ftpRevisionLabel_->setText(QStringLiteral("revision：%1").arg(ftpRevision_));
-    retryMaxSpin_->setValue(config.retryMax);
-    retryIntervalSpin_->setValue(config.retryIntervalSec);
-    connectTimeoutSpin_->setValue(config.connectTimeoutSec);
-    transferTimeoutSpin_->setValue(config.transferTimeoutSec);
-    scanIntervalSpin_->setValue(config.scanIntervalSec);
-    ftpTargetsTable_->setRowCount(0);
-    taskTargets_->clear();
-    for (const rv1126b::FtpTargetSnapshotDto& target : config.targets) {
-        addFtpTargetRow(target);
-        if (target.enabled) {
-            auto* entry = new QListWidgetItem(target.id, taskTargets_);
-            entry->setData(Qt::UserRole, target.id);
-            entry->setFlags(entry->flags() | Qt::ItemIsUserCheckable);
-            entry->setCheckState(Qt::Checked);
-        }
-    }
-    ftpStatus_->setText(config.restartRequired ? QStringLiteral("配置需要重启后生效")
-                                              : QStringLiteral("配置支持热加载，无需重启"));
-}
-
-void Rv1126bDeviceManagementDialog::addFtpTargetRow(
-    const std::optional<rv1126b::FtpTargetSnapshotDto>& target)
-{
-    const int row = ftpTargetsTable_->rowCount();
-    ftpTargetsTable_->insertRow(row);
-    auto* enabled = new QCheckBox(ftpTargetsTable_);
-    enabled->setChecked(target ? target->enabled : true);
-    auto* id = new QLineEdit(target ? target->id : QStringLiteral("server%1").arg(row + 1), ftpTargetsTable_);
-    auto* host = new QLineEdit(target ? target->host : QString(), ftpTargetsTable_);
-    auto* port = new QSpinBox(ftpTargetsTable_);
-    port->setRange(1, 65535);
-    port->setValue(target ? target->port : 21);
-    auto* user = new QLineEdit(target ? target->user : QString(), ftpTargetsTable_);
-    auto* action = new QComboBox(ftpTargetsTable_);
-    action->addItem(QStringLiteral("保留"), static_cast<int>(rv1126b::FtpPasswordAction::Keep));
-    action->addItem(QStringLiteral("替换"), static_cast<int>(rv1126b::FtpPasswordAction::Replace));
-    action->addItem(QStringLiteral("清除"), static_cast<int>(rv1126b::FtpPasswordAction::Clear));
-    auto* password = new QLineEdit(ftpTargetsTable_);
-    password->setEchoMode(QLineEdit::Password);
-    password->setObjectName(QStringLiteral("ftpPasswordEdit"));
-    password->setEnabled(false);
-    connect(action, &QComboBox::currentIndexChanged, password, [this, action, password]() {
-        const bool replace = action->currentData().toInt() == static_cast<int>(rv1126b::FtpPasswordAction::Replace);
-        if (!replace) password->clear();
-        password->setEnabled(replace);
-        validateFtpRowsInline();
-    });
-    auto* remote = new QLineEdit(target ? target->remoteDir : QStringLiteral("/vehicle_events"), ftpTargetsTable_);
-    auto* passive = new QCheckBox(ftpTargetsTable_);
-    passive->setChecked(!target || target->passive);
-    auto* configured = new QLabel(target && target->passwordConfigured ? QStringLiteral("是") : QStringLiteral("否"), ftpTargetsTable_);
-    ftpTargetsTable_->setCellWidget(row, 0, enabled);
-    ftpTargetsTable_->setCellWidget(row, 1, id);
-    ftpTargetsTable_->setCellWidget(row, 2, host);
-    ftpTargetsTable_->setCellWidget(row, 3, port);
-    ftpTargetsTable_->setCellWidget(row, 4, user);
-    ftpTargetsTable_->setCellWidget(row, 5, action);
-    ftpTargetsTable_->setCellWidget(row, 6, password);
-    ftpTargetsTable_->setCellWidget(row, 7, remote);
-    ftpTargetsTable_->setCellWidget(row, 8, passive);
-    ftpTargetsTable_->setCellWidget(row, 9, configured);
-    for (QLineEdit* editor : {id, host, user, password, remote}) {
-        connect(editor, &QLineEdit::textChanged, this,
-                [this]() { validateFtpRowsInline(); });
-    }
-    validateFtpRowsInline();
-}
-
-bool Rv1126bDeviceManagementDialog::validateFtpRowsInline()
-{
-    if (!ftpTargetsTable_) return false;
-    QHash<QString, int> idCounts;
-    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row) {
-        auto* id = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1));
-        if (id) ++idCounts[id->text().trimmed()];
-    }
-    bool valid = true;
-    const auto mark = [&valid](QLineEdit* editor, bool rowValid, const QString& message) {
-        if (!editor) return;
-        editor->setStyleSheet(rowValid ? QString() : QStringLiteral("border: 1px solid #b00020;"));
-        editor->setToolTip(rowValid ? QString() : message);
-        valid = valid && rowValid;
-    };
-    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row) {
-        auto* id = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1));
-        auto* host = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 2));
-        auto* user = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 4));
-        auto* action = qobject_cast<QComboBox*>(ftpTargetsTable_->cellWidget(row, 5));
-        auto* password = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 6));
-        auto* remote = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 7));
-        const QString idValue = id ? id->text().trimmed() : QString();
-        mark(id, !idValue.isEmpty() && idCounts.value(idValue) == 1,
-             QStringLiteral("ID 不能为空且不能重复"));
-        QHostAddress address;
-        const bool ipv4 = host && address.setAddress(host->text().trimmed())
-            && address.protocol() == QAbstractSocket::IPv4Protocol;
-        mark(host, ipv4, QStringLiteral("请输入有效 IPv4 地址"));
-        mark(user, user && !user->text().trimmed().isEmpty(), QStringLiteral("用户名不能为空"));
-        mark(remote, remote && !remote->text().trimmed().isEmpty(), QStringLiteral("远端目录不能为空"));
-        const bool replacementPresent = !action || action->currentData().toInt()
-                != static_cast<int>(rv1126b::FtpPasswordAction::Replace)
-            || (password && !password->text().isEmpty());
-        mark(password, replacementPresent, QStringLiteral("选择替换密码后必须输入新密码"));
-    }
-    if (saveFtpButton_) saveFtpButton_->setEnabled(valid);
-    return valid;
-}
-
-rv1126b::FtpConfigUpdate Rv1126bDeviceManagementDialog::collectFtpConfig() const
-{
-    rv1126b::FtpConfigUpdate update;
-    update.expectedRevision = ftpRevision_;
-    update.deviceId = deviceId_;
-    update.retryMax = retryMaxSpin_->value();
-    update.retryIntervalSec = retryIntervalSpin_->value();
-    update.connectTimeoutSec = connectTimeoutSpin_->value();
-    update.transferTimeoutSec = transferTimeoutSpin_->value();
-    update.scanIntervalSec = scanIntervalSpin_->value();
-    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row) {
-        rv1126b::FtpTargetUpdate target;
-        target.enabled = qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 0))->isChecked();
-        target.id = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1))->text().trimmed();
-        target.host = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 2))->text().trimmed();
-        target.port = static_cast<quint16>(qobject_cast<QSpinBox*>(ftpTargetsTable_->cellWidget(row, 3))->value());
-        target.user = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 4))->text().trimmed();
-        auto* action = qobject_cast<QComboBox*>(ftpTargetsTable_->cellWidget(row, 5));
-        target.passwordAction.value = static_cast<rv1126b::FtpPasswordAction>(action->currentData().toInt());
-        auto* password = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 6));
-        if (target.passwordAction.value == rv1126b::FtpPasswordAction::Replace)
-            target.replacementPassword = password->text();
-        target.remoteDir = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 7))->text().trimmed();
-        target.passive = qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 8))->isChecked();
-        update.targets.append(target);
-    }
-    return update;
-}
-
-void Rv1126bDeviceManagementDialog::clearPasswordEditors()
-{
-    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row)
-        if (auto* password = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 6))) password->clear();
-}
-
-void Rv1126bDeviceManagementDialog::applyFtpControl(const rv1126b::FtpControlDto& control)
-{
-    autoEnabledCheck_->setChecked(control.enabled);
-    if (control.scope.value == rv1126b::FtpControlScope::AllExisting)
-        autoScopeCombo_->setCurrentIndex(autoScopeCombo_->findData(static_cast<int>(rv1126b::FtpControlScope::AllExisting)));
-    else
-        autoScopeCombo_->setCurrentIndex(autoScopeCombo_->findData(static_cast<int>(rv1126b::FtpControlScope::NewEventsOnly)));
-}
-
-void Rv1126bDeviceManagementDialog::applyTaskPage(const rv1126b::FtpTaskPageDto& page,
-                                                  const QString& requestedCursor)
-{
-    const QString currentCursor = taskPageCursors_.value(taskPageIndex_);
-    if (currentCursor != requestedCursor) return;
-    taskTable_->setRowCount(page.items.size());
-    bool active = false;
-    for (int row = 0; row < page.items.size(); ++row) {
-        const auto& task = page.items.at(row);
-        auto* id = item(task.taskId);
-        id->setData(Qt::UserRole, task.taskId);
-        auto* state = item(taskStateText(task.state.value, task.state.rawValue));
-        state->setData(Qt::UserRole, static_cast<int>(task.state.value));
-        taskTable_->setItem(row, 0, id);
-        taskTable_->setItem(row, 1, state);
-        taskTable_->setItem(row, 2, item(QStringLiteral("%1 — %2")
-            .arg(epochText(task.startEpochMs, Qt::UTC), epochText(task.endEpochMs, Qt::UTC))));
-        taskTable_->setItem(row, 3, item(epochText(task.createdEpochMs, Qt::LocalTime)));
-        taskTable_->setItem(row, 4, item(task.targetIds.join(QStringLiteral(", "))));
-        active = active || task.state.value == rv1126b::FtpTaskState::Queued
-            || task.state.value == rv1126b::FtpTaskState::Running;
-    }
-    nextTaskCursor_ = page.hasMore ? page.nextCursor : std::nullopt;
-    previousTasksButton_->setEnabled(taskPageIndex_ > 0);
-    nextTasksButton_->setEnabled(nextTaskCursor_.has_value());
-    taskPageLabel_->setText(QStringLiteral("第 %1 页").arg(taskPageIndex_ + 1));
-    if (active && tabs_->currentIndex() == static_cast<int>(InitialPage::FtpTasks)) taskRefreshTimer_->start();
-}
-
-void Rv1126bDeviceManagementDialog::applyTaskDetail(const rv1126b::FtpTaskDetailDto& detail)
-{
-    selectedTaskId_ = detail.summary.taskId;
-    selectedTaskState_ = detail.summary.state.value;
-    retryTaskButton_->setEnabled(selectedTaskState_ == rv1126b::FtpTaskState::Failed);
-    taskDetailTable_->setRowCount(detail.targets.size());
-    for (int row = 0; row < detail.targets.size(); ++row) {
-        const auto& target = detail.targets.at(row);
-        taskDetailTable_->setItem(row, 0, item(target.targetId));
-        taskDetailTable_->setItem(row, 1, item(taskStateText(target.state.value, target.state.rawValue)));
-        taskDetailTable_->setItem(row, 2, item(QString::number(target.total)));
-        taskDetailTable_->setItem(row, 3, item(QString::number(target.pending)));
-        taskDetailTable_->setItem(row, 4, item(QString::number(target.uploading)));
-        taskDetailTable_->setItem(row, 5, item(QString::number(target.done)));
-        taskDetailTable_->setItem(row, 6, item(QString::number(target.failed)));
-        taskDetailTable_->setItem(row, 7, item(QString::number(target.attempts)));
-        taskDetailTable_->setItem(row, 8, item(target.lastError));
-    }
-    updateTaskRefreshState();
-}
-
-void Rv1126bDeviceManagementDialog::applyLocalTaskSnapshots(
-    const QVector<rv1126b::StoredFtpTask>& tasks)
-{
-    localTaskSnapshots_ = tasks;
-    taskTable_->setRowCount(tasks.size());
-    qint64 newestRefresh = 0;
-    for (int row = 0; row < tasks.size(); ++row) {
-        const auto& task = tasks.at(row);
-        newestRefresh = qMax(newestRefresh, task.refreshedEpochMs);
-        auto* id = item(task.taskId);
-        id->setData(Qt::UserRole, task.taskId);
-        auto* state = item(taskStateText(task.state.value, task.state.rawValue));
-        state->setData(Qt::UserRole, static_cast<int>(task.state.value));
-        QStringList targetIds;
-        for (const auto& target : task.targets) targetIds.append(target.targetId);
-        taskTable_->setItem(row, 0, id);
-        taskTable_->setItem(row, 1, state);
-        taskTable_->setItem(row, 2, item(QStringLiteral("%1 — %2")
-            .arg(epochText(task.startEpochMs, Qt::UTC), epochText(task.endEpochMs, Qt::UTC))));
-        taskTable_->setItem(row, 3, item(epochText(task.createdEpochMs, Qt::LocalTime)));
-        taskTable_->setItem(row, 4, item(targetIds.join(QStringLiteral(", "))));
-    }
-    previousTasksButton_->setEnabled(false);
-    nextTasksButton_->setEnabled(false);
-    taskPageLabel_->setText(QStringLiteral("本地快照 · %1 条 · 刷新于 %2")
-        .arg(tasks.size()).arg(epochText(newestRefresh, Qt::LocalTime)));
-    retryTaskButton_->setEnabled(false);
-}
-
-void Rv1126bDeviceManagementDialog::applyLocalTaskDetail(const rv1126b::StoredFtpTask& task)
-{
-    selectedTaskId_ = task.taskId;
-    selectedTaskState_ = task.state.value;
-    retryTaskButton_->setEnabled(false);
-    taskDetailTable_->setRowCount(task.targets.size());
-    for (int row = 0; row < task.targets.size(); ++row) {
-        const auto& target = task.targets.at(row);
-        taskDetailTable_->setItem(row, 0, item(target.targetId));
-        taskDetailTable_->setItem(row, 1, item(taskStateText(target.state.value, target.state.rawValue)));
-        taskDetailTable_->setItem(row, 2, item(QString::number(target.total)));
-        taskDetailTable_->setItem(row, 3, item(QString::number(target.pending)));
-        taskDetailTable_->setItem(row, 4, item(QString::number(target.uploading)));
-        taskDetailTable_->setItem(row, 5, item(QString::number(target.done)));
-        taskDetailTable_->setItem(row, 6, item(QString::number(target.failed)));
-        taskDetailTable_->setItem(row, 7, item(QString::number(target.attempts)));
-        taskDetailTable_->setItem(row, 8, item(target.lastError));
-    }
-}
-
-void Rv1126bDeviceManagementDialog::createTask()
-{
-    rv1126b::FtpTaskCreate request;
-    request.startEpochMs = taskStartEdit_->dateTime().toUTC().toMSecsSinceEpoch();
-    request.endEpochMs = taskEndEdit_->dateTime().toUTC().toMSecsSinceEpoch();
-    for (int row = 0; row < taskTargets_->count(); ++row) {
-        QListWidgetItem* target = taskTargets_->item(row);
-        if (target->checkState() == Qt::Checked) request.targetIds.append(target->data(Qt::UserRole).toString());
-    }
-    controller_->createFtpTask(request);
-}
-
-void Rv1126bDeviceManagementDialog::refreshTasks()
-{
-    if (!controller_ || tabs_->currentIndex() != static_cast<int>(InitialPage::FtpTasks)) return;
-    if (!deviceOnline_) {
-        controller_->loadLocalFtpTaskSnapshots();
-        return;
-    }
-    if (!controller_->isBusy(QStringLiteral("ftp.tasks.list"))) {
-        const QString cursor = taskPageCursors_.value(taskPageIndex_);
-        controller_->listFtpTasks(cursor.isEmpty() ? std::nullopt : std::optional<QString>(cursor));
-    }
-    if (!selectedTaskId_.isEmpty()
-        && !controller_->isBusy(QStringLiteral("ftp.task.load"))
-        && (selectedTaskState_ == rv1126b::FtpTaskState::Queued
-            || selectedTaskState_ == rv1126b::FtpTaskState::Running))
-        controller_->loadFtpTask(selectedTaskId_);
-}
-
-void Rv1126bDeviceManagementDialog::updateTaskRefreshState()
-{
-    const bool taskPage = tabs_ && tabs_->currentIndex() == static_cast<int>(InitialPage::FtpTasks);
-    if (taskPage && deviceOnline_) {
-        if (!taskRefreshTimer_->isActive()) taskRefreshTimer_->start();
-    } else {
-        taskRefreshTimer_->stop();
-    }
-}
-
-void Rv1126bDeviceManagementDialog::startLocalFtpReceiver()
-{
-    if (!ftpReceiveServer_) {
-        if (localFtpStatus_) localFtpStatus_->setText(QStringLiteral("当前应用运行时未装配内置 FTP 接收服务"));
-        return;
-    }
-    QHostAddress host;
-    if (!host.setAddress(localFtpHostEdit_->text().trimmed())
-        || host.protocol() != QAbstractSocket::IPv4Protocol) {
-        localFtpStatus_->setText(QStringLiteral("本机 IP 必须是有效 IPv4 地址"));
-        return;
-    }
-    if (localFtpPassiveStartSpin_->value() > localFtpPassiveEndSpin_->value()) {
-        localFtpStatus_->setText(QStringLiteral("被动端口范围无效"));
-        return;
-    }
-
-    rv1126b::EmbeddedFtpReceiveServerConfig config;
-    config.rootPath = localFtpRootEdit_->text().trimmed();
-    config.userName = localFtpUserEdit_->text().trimmed();
-    config.password = localFtpPasswordEdit_->text();
-    config.listenAddress = QHostAddress::AnyIPv4;
-    config.advertisedAddress = host;
-    config.controlPort = static_cast<quint16>(localFtpPortSpin_->value());
-    config.passivePortStart = static_cast<quint16>(localFtpPassiveStartSpin_->value());
-    config.passivePortEnd = static_cast<quint16>(localFtpPassiveEndSpin_->value());
-    if (!ftpReceiveServer_->start(config)) {
-        localFtpStatus_->setText(QStringLiteral("接收服务启动失败：%1").arg(ftpReceiveServer_->lastError()));
-        updateLocalFtpReceiverState();
-        return;
-    }
-    localFtpStatus_->setText(QStringLiteral("接收服务已启动：%1:%2，目录 %3")
-                                 .arg(host.toString())
-                                 .arg(ftpReceiveServer_->controlPort())
-                                 .arg(config.rootPath));
-    updateLocalFtpReceiverState();
-}
-
-void Rv1126bDeviceManagementDialog::stopLocalFtpReceiver()
-{
-    if (ftpReceiveServer_) ftpReceiveServer_->stop();
-    if (localFtpStatus_) localFtpStatus_->setText(QStringLiteral("接收服务已停止"));
-    updateLocalFtpReceiverState();
-}
-
-void Rv1126bDeviceManagementDialog::applyLocalFtpTarget(bool saveAndEnable)
-{
-    if (!ftpReceiveServer_ || !ftpReceiveServer_->isListening()) {
-        startLocalFtpReceiver();
-    }
-    if (!ftpReceiveServer_ || !ftpReceiveServer_->isListening()) return;
-    writeLocalFtpTargetRow();
-    if (!validateFtpRowsInline()) return;
-    if (!saveAndEnable) {
-        const QString targetId = localFtpTargetIdEdit_
-            ? localFtpTargetIdEdit_->text().trimmed()
-            : QStringLiteral("local_pc");
-        localFtpStatus_->setText(QStringLiteral("已填入本机目标 %1，可一键配置板端或创建历史任务").arg(targetId));
-        return;
-    }
-    if (!controller_) return;
-    const rv1126b::FtpConfigUpdate update = collectFtpConfig();
-    controller_->saveFtpConfigAndEnableNewEvents(update);
-}
-
-void Rv1126bDeviceManagementDialog::updateLocalFtpReceiverState()
-{
-    const bool available = ftpReceiveServer_ != nullptr;
-    const bool running = available && ftpReceiveServer_->isListening();
-    if (localFtpStartButton_) localFtpStartButton_->setEnabled(available && !running);
-    if (localFtpStopButton_) localFtpStopButton_->setEnabled(running);
-    if (!localFtpStatus_) return;
-    if (!available) {
-        localFtpStatus_->setText(QStringLiteral("当前应用运行时未装配内置 FTP 接收服务"));
-    } else if (running) {
-        const auto config = ftpReceiveServer_->config();
-        localFtpStatus_->setText(QStringLiteral("接收服务运行中：%1:%2 -> %3")
-                                     .arg(config.advertisedAddress.toString())
-                                     .arg(ftpReceiveServer_->controlPort())
-                                     .arg(config.rootPath));
-    } else if (localFtpStatus_->text().isEmpty()) {
-        localFtpStatus_->setText(QStringLiteral("点击“一键启动接收并配置板端”即可启动接收服务并写入板端"));
-    }
 }
 
 void Rv1126bDeviceManagementDialog::startEventExport()
@@ -1892,175 +1079,6 @@ void Rv1126bDeviceManagementDialog::finishEventExport()
     QTimer::singleShot(0, this, &Rv1126bDeviceManagementDialog::startNextEventExportTarget);
 }
 
-void Rv1126bDeviceManagementDialog::refreshIspConfig()
-{
-    if (!boardApi_) {
-        if (ispStatus_) ispStatus_->setText(QStringLiteral("当前设备没有可用的 HTTP API"));
-        return;
-    }
-    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在读取图像参数..."));
-    boardApi_->getIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
-        if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("读取失败：%1").arg(boardErrorText(result.error())));
-            return;
-        }
-        applyIspConfigJson(result.value(), IspRefresh);
-    });
-}
-
-void Rv1126bDeviceManagementDialog::saveCurrentIspConfig()
-{
-    if (!boardApi_) return;
-    if (QMessageBox::question(this, QStringLiteral("保存当前图像参数"),
-                              QStringLiteral("确认把相机当前运行中的曝光/增益/图像参数保存为开机默认？\n"
-                                             "写入后要重启相机服务（或断电重启）才会套用，重启前画面不会立刻变化。"))
-        != QMessageBox::Yes) return;
-    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在保存当前图像参数..."));
-    boardApi_->saveCurrentIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
-        if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("保存失败：%1").arg(boardErrorText(result.error())));
-            return;
-        }
-        applyIspConfigJson(result.value(), IspSaveCurrent);
-    });
-}
-
-void Rv1126bDeviceManagementDialog::clearIspConfig()
-{
-    if (!boardApi_) return;
-    if (QMessageBox::question(this, QStringLiteral("取消开机默认覆盖"),
-                              QStringLiteral("确认取消本软件对图像参数的开机覆盖？\n"
-                                             "取消后开机不再套用这组参数；"
-                                             "已经写进板端配置文件的当前值不会被还原成出厂默认。"))
-        != QMessageBox::Yes) return;
-    if (ispStatus_) ispStatus_->setText(QStringLiteral("正在取消开机默认覆盖..."));
-    boardApi_->clearIspConfig(this, [this](rv1126b::ApiResult<QJsonObject> result) {
-        if (!result) {
-            if (ispStatus_) ispStatus_->setText(QStringLiteral("取消失败：%1").arg(boardErrorText(result.error())));
-            return;
-        }
-        applyIspConfigJson(result.value(), IspClear);
-    });
-}
-
-void Rv1126bDeviceManagementDialog::applyIspConfigJson(const QJsonObject& config, int action)
-{
-    // 板端返回的是 close/open/auto 这类英文枚举，这里统一翻成现场看得懂的中文。
-    const auto onOff = [](const QString& value) {
-        if (value.compare(QStringLiteral("close"), Qt::CaseInsensitive) == 0
-            || value.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0
-            || value.compare(QStringLiteral("off"), Qt::CaseInsensitive) == 0
-            || value == QStringLiteral("0")) {
-            return QStringLiteral("关");
-        }
-        if (value.compare(QStringLiteral("open"), Qt::CaseInsensitive) == 0
-            || value.compare(QStringLiteral("on"), Qt::CaseInsensitive) == 0) {
-            return QStringLiteral("开");
-        }
-        return value.isEmpty() ? QStringLiteral("未读取") : value;
-    };
-    const auto modeText = [](const QString& value) {
-        if (value.compare(QStringLiteral("auto"), Qt::CaseInsensitive) == 0) {
-            return QStringLiteral("自动");
-        }
-        if (value.compare(QStringLiteral("manual"), Qt::CaseInsensitive) == 0) {
-            return QStringLiteral("手动");
-        }
-        return value.isEmpty() ? QStringLiteral("未读取") : value;
-    };
-    const auto levelText = [&onOff](const QString& state, const QString& level) {
-        if (state.isEmpty() && level.isEmpty()) {
-            return QStringLiteral("未读取");
-        }
-        if (state.compare(QStringLiteral("close"), Qt::CaseInsensitive) == 0) {
-            return QStringLiteral("关");
-        }
-        return QStringLiteral("%1（档位 %2）").arg(onOff(state),
-                                                 level.isEmpty() ? QStringLiteral("-") : level);
-    };
-    const auto textOrUnread = [](const QJsonObject& object, const char* key) {
-        const QString value = object.value(QLatin1String(key)).toString();
-        return value.isEmpty() ? QStringLiteral("未读取") : value;
-    };
-
-    const auto summary = [&](const QJsonObject& object, bool includeEnabled) {
-        QString text = QStringLiteral("快门：%1（%2）；增益：%3（%4）；亮度：%5；对比度：%6；"
-                                      "强光抑制：%7；背光补偿：%8；高动态 HDR：%9；宽动态 WDR：%10")
-                           .arg(textOrUnread(object, "exposure_time"),
-                                modeText(object.value(QStringLiteral("exposure_mode")).toString()),
-                                textOrUnread(object, "exposure_gain"),
-                                modeText(object.value(QStringLiteral("gain_mode")).toString()),
-                                textOrUnread(object, "brightness"),
-                                textOrUnread(object, "contrast"),
-                                levelText(object.value(QStringLiteral("hlc")).toString(),
-                                          object.value(QStringLiteral("hlc_level")).toString()),
-                                levelText(object.value(QStringLiteral("blc_region")).toString(),
-                                          object.value(QStringLiteral("blc_strength")).toString()),
-                                levelText(object.value(QStringLiteral("hdr")).toString(),
-                                          object.value(QStringLiteral("hdr_level")).toString()),
-                                levelText(object.value(QStringLiteral("wdr")).toString(),
-                                          object.value(QStringLiteral("wdr_level")).toString()));
-        if (includeEnabled) {
-            text.prepend(QStringLiteral("开机套用：%1；")
-                             .arg(object.value(QStringLiteral("enabled")).toBool()
-                                      ? QStringLiteral("开")
-                                      : QStringLiteral("关")));
-        }
-        return text;
-    };
-
-    QJsonObject current = config.value(QStringLiteral("current_live")).toObject();
-    const bool liveAvailable = config.value(QStringLiteral("live_available")).toBool(true);
-    const QString sourceRaw = config.value(QStringLiteral("current_source")).toString();
-    QString sourceText = QStringLiteral("未知来源");
-    if (sourceRaw == QStringLiteral("vendor_cgi")) {
-        sourceText = QStringLiteral("实时值（直接读自相机）");
-    } else if (sourceRaw == QStringLiteral("rkipc_ini")) {
-        sourceText = QStringLiteral("配置文件值（rkipc 启动时读取，不是实时值）");
-    }
-    if (current.isEmpty()) current = config.value(QStringLiteral("current")).toObject();
-    if (current.isEmpty()) current = config.value(QStringLiteral("current_ini")).toObject();
-    const QJsonObject persisted = config.value(QStringLiteral("persisted")).toObject();
-    // "当前运行"一行不显示开机套用开关：板端实时读取路径里它恒为 true，显示只会误导。
-    if (ispCurrentLabel_) ispCurrentLabel_->setText(summary(current, false));
-    if (ispPersistedLabel_) ispPersistedLabel_->setText(summary(persisted, true));
-
-    // 板端关闭配置写入时，保存/取消必然 403，按钮直接置灰。
-    const bool writeEnabled = config.value(QStringLiteral("write_enabled")).toBool(true);
-    if (ispSaveCurrentButton_) ispSaveCurrentButton_->setEnabled(writeEnabled);
-    if (ispClearButton_) ispClearButton_->setEnabled(writeEnabled);
-    if (ispSaveCurrentButton_) {
-        ispSaveCurrentButton_->setToolTip(writeEnabled
-            ? QString()
-            : QStringLiteral("板端已关闭配置写入，无法保存"));
-    }
-
-    if (!ispStatus_) {
-        return;
-    }
-    QStringList lines;
-    if (action == IspSaveCurrent) {
-        lines << QStringLiteral("已把这组参数保存为开机默认");
-    } else if (action == IspClear) {
-        lines << QStringLiteral("已取消开机默认覆盖（开机不再套用这组参数）");
-    }
-    if (!writeEnabled) {
-        lines << QStringLiteral("板端已关闭配置写入，保存/取消按钮不可用");
-    }
-    lines << QStringLiteral("配置版本：%1")
-                 .arg(config.value(QStringLiteral("revision")).toString(QStringLiteral("未读取")));
-    lines << QStringLiteral("数值来源：%1").arg(sourceText);
-    if (!liveAvailable) {
-        const QString liveError = config.value(QStringLiteral("live_error")).toString();
-        lines << QStringLiteral("实时值读取失败，上面「当前运行」显示的是配置文件里的值%1")
-                     .arg(liveError.isEmpty() ? QString() : QStringLiteral("（%1）").arg(liveError));
-    }
-    lines << (config.value(QStringLiteral("restart_required")).toBool()
-                  ? QStringLiteral("已在板端落盘，重启相机服务或断电重启后生效（本次重启前画面不变）")
-                  : QStringLiteral("板端已保存的值与本次读取一致，无需重启"));
-    ispStatus_->setText(lines.join(QStringLiteral("；")));
-}
-
 void Rv1126bDeviceManagementDialog::browseEventSyncTargetFolder()
 {
     const QString start = eventSyncTargetEdit_ ? eventSyncTargetEdit_->text().trimmed() : QString();
@@ -2193,95 +1211,6 @@ void Rv1126bDeviceManagementDialog::handleBoardDataPullFinished(int seen, int wr
             : QStringLiteral("拉取完成：读取 %1 条，写入 %2 条，失败 %3 条").arg(seen).arg(written).arg(failed));
 }
 
-QString Rv1126bDeviceManagementDialog::defaultLocalFtpAddress() const
-{
-    QString fallback;
-    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
-    for (const QNetworkInterface& iface : interfaces) {
-        if (!(iface.flags() & QNetworkInterface::IsUp)
-            || !(iface.flags() & QNetworkInterface::IsRunning)
-            || (iface.flags() & QNetworkInterface::IsLoopBack)) {
-            continue;
-        }
-        for (const QNetworkAddressEntry& entry : iface.addressEntries()) {
-            const QHostAddress address = entry.ip();
-            if (address.protocol() != QAbstractSocket::IPv4Protocol) continue;
-            const QString text = address.toString();
-            if (text.startsWith(QStringLiteral("192.168.137."))) return text;
-            if (fallback.isEmpty()) fallback = text;
-        }
-    }
-    return fallback.isEmpty() ? QStringLiteral("192.168.137.1") : fallback;
-}
-
-QString Rv1126bDeviceManagementDialog::defaultLocalFtpTargetId(const QString& host) const
-{
-    QString suffix = host.trimmed();
-    suffix.replace(QRegularExpression(QStringLiteral(R"([^A-Za-z0-9]+)")), QStringLiteral("_"));
-    suffix.replace(QRegularExpression(QStringLiteral(R"(^_+|_+$)")), QString());
-    return QStringLiteral("pc_%1").arg(suffix.isEmpty() ? QStringLiteral("local") : suffix);
-}
-
-void Rv1126bDeviceManagementDialog::syncLocalFtpTargetIdFromHost()
-{
-    if (!localFtpTargetIdAuto_ || !localFtpTargetIdEdit_) return;
-    localFtpTargetIdEdit_->setText(defaultLocalFtpTargetId(localFtpHostEdit_->text()));
-}
-
-int Rv1126bDeviceManagementDialog::localFtpTargetRow() const
-{
-    if (!ftpTargetsTable_) return -1;
-    const QString targetId = localFtpTargetIdEdit_
-        ? localFtpTargetIdEdit_->text().trimmed()
-        : QStringLiteral("local_pc");
-    for (int row = 0; row < ftpTargetsTable_->rowCount(); ++row) {
-        auto* id = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1));
-        if (id && id->text().trimmed() == targetId) return row;
-    }
-    return -1;
-}
-
-void Rv1126bDeviceManagementDialog::writeLocalFtpTargetRow()
-{
-    const QString targetId = localFtpTargetIdEdit_
-        ? localFtpTargetIdEdit_->text().trimmed()
-        : QStringLiteral("local_pc");
-    if (targetId.isEmpty()) {
-        showError(QStringLiteral("invalid_ftp_target_id"), QStringLiteral("FTP 目标 ID 不能为空"));
-        return;
-    }
-    if (targetId.size() > 32
-        || !QRegularExpression(QStringLiteral(R"(^[A-Za-z0-9_-]+$)")).match(targetId).hasMatch()) {
-        showError(QStringLiteral("invalid_ftp_target_id"),
-                  QStringLiteral("FTP 目标 ID 只能包含 1..32 位字母、数字、下划线和横线"));
-        return;
-    }
-    int row = localFtpTargetRow();
-    if (row < 0) {
-        if (ftpTargetsTable_->rowCount() >= rv1126b::DeviceOperationsController::MaxFtpTargets) {
-            showError(QStringLiteral("too_many_ftp_targets"), QStringLiteral("FTP 目标最大 8 个，请先删除一个目标"));
-            return;
-        }
-        addFtpTargetRow();
-        row = ftpTargetsTable_->rowCount() - 1;
-    }
-    qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 0))->setChecked(true);
-    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 1))->setText(targetId);
-    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 2))->setText(localFtpHostEdit_->text().trimmed());
-    qobject_cast<QSpinBox*>(ftpTargetsTable_->cellWidget(row, 3))->setValue(localFtpPortSpin_->value());
-    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 4))->setText(localFtpUserEdit_->text().trimmed());
-    auto* action = qobject_cast<QComboBox*>(ftpTargetsTable_->cellWidget(row, 5));
-    action->setCurrentIndex(action->findData(static_cast<int>(rv1126b::FtpPasswordAction::Replace)));
-    auto* password = qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 6));
-    password->setEnabled(true);
-    password->setText(localFtpPasswordEdit_->text());
-    qobject_cast<QLineEdit*>(ftpTargetsTable_->cellWidget(row, 7))->setText(QStringLiteral("/vehicle_events"));
-    qobject_cast<QCheckBox*>(ftpTargetsTable_->cellWidget(row, 8))->setChecked(true);
-    if (auto* configured = qobject_cast<QLabel*>(ftpTargetsTable_->cellWidget(row, 9))) {
-        configured->setText(QStringLiteral("将替换"));
-    }
-}
-
 QString Rv1126bDeviceManagementDialog::defaultEventStorageRoot() const
 {
     if (!storageRootPath_.trimmed().isEmpty()) return QDir::cleanPath(storageRootPath_.trimmed());
@@ -2357,45 +1286,4 @@ void Rv1126bDeviceManagementDialog::saveEventStorageRoot()
     if (eventExportStatus_ && !exportInFlight_)
         eventExportStatus_->setText(QStringLiteral("导出目录：%1").arg(currentEventExportRoot()));
     eventSyncStatus_->setText(QStringLiteral("本地存储根目录已保存"));
-}
-
-void Rv1126bDeviceManagementDialog::showRevisionConflict(
-    const rv1126b::FtpConfigSnapshotDto& remote,
-    const rv1126b::FtpConfigUpdate& local,
-    const QStringList& passwordTargetIds)
-{
-    const QString passwordNote = passwordTargetIds.isEmpty()
-        ? QString()
-        : QStringLiteral("\n\n以下目标的替换密码已清空，必须重新输入后再提交：%1")
-              .arg(passwordTargetIds.join(QStringLiteral(", ")));
-    const auto answer = QMessageBox::question(
-        this, QStringLiteral("FTP revision 冲突"),
-        QStringLiteral("远端配置已变化。保留当前非敏感编辑并采用最新 revision 重提？\n\n%1%2")
-            .arg(conflictSummary(remote, local), passwordNote));
-    if (answer != QMessageBox::Yes) return;
-    ftpRevision_ = remote.revision;
-    ftpRevisionLabel_->setText(QStringLiteral("revision：%1（冲突后已更新）").arg(ftpRevision_));
-    if (!passwordTargetIds.isEmpty()) {
-        ftpStatus_->setText(QStringLiteral("请重新输入替换密码，再点击“保存并启用”"));
-        return;
-    }
-    rv1126b::FtpConfigUpdate retry = collectFtpConfig();
-    retry.expectedRevision = remote.revision;
-    controller_->saveFtpConfigAndEnableNewEvents(retry);
-}
-
-QString Rv1126bDeviceManagementDialog::conflictSummary(
-    const rv1126b::FtpConfigSnapshotDto& remote,
-    const rv1126b::FtpConfigUpdate& local) const
-{
-    QStringList remoteTargets;
-    for (const auto& target : remote.targets)
-        remoteTargets.append(QStringLiteral("%1=%2:%3/%4")
-            .arg(target.id, target.host).arg(target.port).arg(target.remoteDir));
-    QStringList localTargets;
-    for (const auto& target : local.targets)
-        localTargets.append(QStringLiteral("%1=%2:%3/%4")
-            .arg(target.id, target.host).arg(target.port).arg(target.remoteDir));
-    return QStringLiteral("远端 revision：%1\n远端目标：%2\n本地目标：%3")
-        .arg(remote.revision, remoteTargets.join(QStringLiteral("；")), localTargets.join(QStringLiteral("；")));
 }

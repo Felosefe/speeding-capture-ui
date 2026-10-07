@@ -1,21 +1,11 @@
 #include "../src/ui/Rv1126bDeviceManagementDialog.h"
-#include "../src/rv1126b/services/EmbeddedFtpReceiveServer.h"
 
-#include <QCheckBox>
-#include <QAbstractButton>
-#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTest>
-#include <QTemporaryDir>
-#include <QTimer>
-
-#include <algorithm>
 
 using namespace rv1126b;
 
@@ -59,6 +49,13 @@ public:
     void cancelAll() override {}
 };
 
+/*
+ * The FTP service still answers with real payloads: DeviceOperationsController::loadAll()
+ * drives it, so the dialog receives ftpConfigLoaded / ftpControlLoaded / ftpTasksLoaded
+ * while it is alive.  Those callbacks used to write into the FTP-config / FTP-tasks
+ * widgets; if any of them is ever bound again to a widget that no longer exists the
+ * dialog below crashes, which is exactly what these tests guard against.
+ */
 class UiFtp final : public FtpService
 {
 public:
@@ -66,26 +63,9 @@ public:
     FtpControlDto control;
     FtpTaskPageDto page;
     FtpTaskDetailDto detail;
-    FtpActivationResult activation;
-    FtpConfigUpdate lastUpdate;
-    bool conflictOnce = false;
-    int saveCount = 0;
 
     RequestId loadConfig(QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success(config)); }
-    RequestId saveConfigAndEnableNewEvents(const FtpConfigUpdate& u, QObject*, ApiCompletion<FtpActivationResult> c) override
-    {
-        ++saveCount;
-        lastUpdate = u;
-        if (conflictOnce) {
-            conflictOnce = false;
-            config.revision = QStringLiteral("remote-revision");
-            ApiError error;
-            error.code = QStringLiteral("config_revision_conflict");
-            error.category = ApiErrorCategory::Conflict;
-            return done(std::move(c), ApiResult<FtpActivationResult>::failure(error));
-        }
-        return done(std::move(c), ApiResult<FtpActivationResult>::success(activation));
-    }
+    RequestId saveConfigAndEnableNewEvents(const FtpConfigUpdate&, QObject*, ApiCompletion<FtpActivationResult> c) override { return done(std::move(c), ApiResult<FtpActivationResult>::success({})); }
     RequestId rollbackConfig(const QString&, QObject*, ApiCompletion<FtpConfigSnapshotDto> c) override { return done(std::move(c), ApiResult<FtpConfigSnapshotDto>::success(config)); }
     RequestId loadControl(QObject*, ApiCompletion<FtpControlDto> c) override { return done(std::move(c), ApiResult<FtpControlDto>::success(control)); }
     RequestId updateControl(const FtpControlUpdate& u, QObject*, ApiCompletion<FtpControlDto> c) override { control.enabled = u.enabled; control.scope = u.scope; return done(std::move(c), ApiResult<FtpControlDto>::success(control)); }
@@ -126,9 +106,6 @@ void configure(UiBoard& board, UiFtp& ftp, int targetCount = 1)
     ftp.control.revision = QStringLiteral("control-1");
     ftp.control.enabled = true;
     ftp.control.scope.value = FtpControlScope::NewEventsOnly;
-    ftp.activation.configSaved = true;
-    ftp.activation.autoEnabled = false;
-    ftp.activation.newRevision = QStringLiteral("rev-2");
 
     FtpTaskSummaryDto summary;
     summary.taskId = QStringLiteral("task-1");
@@ -149,6 +126,11 @@ void configure(UiBoard& board, UiFtp& ftp, int targetCount = 1)
     ftp.detail.targets = {success, failed};
 }
 
+QTabWidget* tabsOf(Rv1126bDeviceManagementDialog& dialog)
+{
+    return dialog.findChild<QTabWidget*>(QStringLiteral("deviceOperationsTabs"));
+}
+
 } // namespace
 
 class DeviceOperationsUiTest final : public QObject
@@ -156,13 +138,12 @@ class DeviceOperationsUiTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void showsManagementPagesTimeWarningAndMixedTaskTargets();
-    void enforcesTargetLimitAndClearsReplacementPassword();
-    void confirmsRevisionConflictAndResubmits();
-    void startsEmbeddedReceiverAndSavesUniqueTargetId();
+    void showsOnlyTheThreeSurvivingPages();
+    void ftpCallbacksAndTabSwitchingDoNotTouchRemovedPages();
+    void offlineDialogOpensWithoutRemovedPages();
 };
 
-void DeviceOperationsUiTest::showsManagementPagesTimeWarningAndMixedTaskTargets()
+void DeviceOperationsUiTest::showsOnlyTheThreeSurvivingPages()
 {
     UiBoard board;
     UiFtp ftp;
@@ -170,123 +151,81 @@ void DeviceOperationsUiTest::showsManagementPagesTimeWarningAndMixedTaskTargets(
     DeviceOperationsController controller({[&](const QString&) { return &board; },
                                            [&](const QString&) { return &ftp; }});
     Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller);
-    auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("deviceOperationsTabs"));
+    auto* tabs = tabsOf(dialog);
     QVERIFY(tabs);
-    QCOMPARE(tabs->count(), 6);
+    QCOMPARE(tabs->count(), 3);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("展示配置"));
+    QCOMPARE(tabs->tabText(1), QStringLiteral("时间"));
+    QCOMPARE(tabs->tabText(2), QStringLiteral("事件同步"));
     QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("siteNameEdit"))->text(), QStringLiteral("测试点位"));
     auto* quality = dialog.findChild<QLabel*>(QStringLiteral("timeQualityLabel"));
     QVERIFY(quality->text().contains(QStringLiteral("不可作为可靠 UTC")));
     QVERIFY(quality->styleSheet().contains(QStringLiteral("b00020")));
     QVERIFY(!dialog.findChild<QPushButton*>(QStringLiteral("syncUtcButton"))->isEnabled());
-
-    tabs->setCurrentIndex(5);
-    auto* tasks = dialog.findChild<QTableWidget*>(QStringLiteral("ftpTaskTable"));
-    QCOMPARE(tasks->rowCount(), 1);
-    tasks->selectRow(0);
-    QCoreApplication::processEvents();
-    auto* details = dialog.findChild<QTableWidget*>(QStringLiteral("ftpTaskDetailTable"));
-    QCOMPARE(details->rowCount(), 2);
-    QCOMPARE(details->item(0, 1)->text(), QStringLiteral("完成"));
-    QCOMPARE(details->item(1, 1)->text(), QStringLiteral("失败"));
-    QVERIFY(dialog.findChild<QPushButton*>(QStringLiteral("retryFtpTaskButton"))->isEnabled());
 }
 
-void DeviceOperationsUiTest::enforcesTargetLimitAndClearsReplacementPassword()
+void DeviceOperationsUiTest::ftpCallbacksAndTabSwitchingDoNotTouchRemovedPages()
 {
     UiBoard board;
     UiFtp ftp;
     configure(board, ftp, 8);
     DeviceOperationsController controller({[&](const QString&) { return &board; },
                                            [&](const QString&) { return &ftp; }});
-    Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller,
-        Rv1126bDeviceManagementDialog::InitialPage::FtpConfig);
+    Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller);
     dialog.show();
     QCoreApplication::processEvents();
-    auto* table = dialog.findChild<QTableWidget*>(QStringLiteral("ftpTargetsTable"));
-    QCOMPARE(table->rowCount(), 8);
-    QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("addFtpTargetButton")), Qt::LeftButton);
-    QCOMPARE(table->rowCount(), 8);
+
+    auto* tabs = tabsOf(dialog);
+    QVERIFY(tabs);
+    for (int round = 0; round < 3; ++round) {
+        for (int index = 0; index < tabs->count(); ++index) {
+            tabs->setCurrentIndex(index);
+            QCoreApplication::processEvents();
+        }
+    }
+    QVERIFY(dialog.isVisible());
+
+    /*
+     * The ISP / FTP-config / FTP-tasks pages must be gone completely, not merely
+     * hidden: no leftover widget may answer to their object names.
+     */
+    QVERIFY(dialog.findChildren<QTableWidget*>().isEmpty());
+    const QStringList goneNames {
+        QStringLiteral("ftpRevisionLabel"), QStringLiteral("localFtpReceiverGroup"),
+        QStringLiteral("localFtpRootEdit"), QStringLiteral("localFtpHostEdit"),
+        QStringLiteral("localFtpTargetIdEdit"), QStringLiteral("localFtpPasswordEdit"),
+        QStringLiteral("localFtpStartButton"), QStringLiteral("localFtpSaveTargetButton"),
+        QStringLiteral("ftpTargetsTable"), QStringLiteral("addFtpTargetButton"),
+        QStringLiteral("saveAndEnableFtpButton"), QStringLiteral("ftpStatusLabel"),
+        QStringLiteral("ftpTaskTargets"), QStringLiteral("createFtpTaskButton"),
+        QStringLiteral("ftpTaskTable"), QStringLiteral("ftpTaskDetailTable"),
+        QStringLiteral("retryFtpTaskButton"),
+    };
+    for (const QString& name : goneNames) {
+        QVERIFY2(dialog.findChild<QWidget*>(name) == nullptr, qPrintable(name));
+    }
+}
+
+void DeviceOperationsUiTest::offlineDialogOpensWithoutRemovedPages()
+{
+    UiBoard board;
+    UiFtp ftp;
+    configure(board, ftp);
+    DeviceOperationsController controller({[&](const QString&) { return &board; },
+                                           [&](const QString&) { return &ftp; }});
+    Rv1126bDeviceManagementDialog dialog(
+        QStringLiteral("device-a"), &controller,
+        Rv1126bDeviceManagementDialog::InitialPage::Evidence, nullptr, false);
+    dialog.show();
+    QCoreApplication::processEvents();
+    auto* tabs = tabsOf(dialog);
+    QVERIFY(tabs);
+    QCOMPARE(tabs->count(), 3);
     QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("deviceOperationsMessage"))->text()
-                .contains(QStringLiteral("最多 8 个")));
-
-    auto* action = qobject_cast<QComboBox*>(table->cellWidget(0, 5));
-    auto* password = qobject_cast<QLineEdit*>(table->cellWidget(0, 6));
-    action->setCurrentIndex(action->findData(static_cast<int>(FtpPasswordAction::Replace)));
-    QCOMPARE(password->echoMode(), QLineEdit::Password);
-    password->setText(QStringLiteral("not-logged"));
-    QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveAndEnableFtpButton")), Qt::LeftButton);
-    QCOMPARE(ftp.lastUpdate.targets[0].replacementPassword.value(), QStringLiteral("not-logged"));
-    QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("ftpStatusLabel"))->text()
-                .contains(QStringLiteral("配置已保存，但自动下发未开启")));
-}
-
-void DeviceOperationsUiTest::confirmsRevisionConflictAndResubmits()
-{
-    UiBoard board;
-    UiFtp ftp;
-    configure(board, ftp);
-    ftp.conflictOnce = true;
-    ftp.activation.autoEnabled = true;
-    DeviceOperationsController controller({[&](const QString&) { return &board; },
-                                           [&](const QString&) { return &ftp; }});
-    Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller,
-        Rv1126bDeviceManagementDialog::InitialPage::FtpConfig);
-    dialog.show();
-    QCoreApplication::processEvents();
-    QTimer::singleShot(0, []() {
-        for (QWidget* widget : QApplication::topLevelWidgets())
-            if (auto* message = qobject_cast<QMessageBox*>(widget))
-                if (QAbstractButton* yes = message->button(QMessageBox::Yes)) yes->click();
-    });
-    QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("saveAndEnableFtpButton")), Qt::LeftButton);
-    QCOMPARE(ftp.saveCount, 2);
-    QCOMPARE(ftp.lastUpdate.expectedRevision, QStringLiteral("remote-revision"));
-    QVERIFY(dialog.findChild<QLabel*>(QStringLiteral("ftpStatusLabel"))->text()
-                .contains(QStringLiteral("all_existing")));
-}
-
-void DeviceOperationsUiTest::startsEmbeddedReceiverAndSavesUniqueTargetId()
-{
-    UiBoard board;
-    UiFtp ftp;
-    configure(board, ftp);
-    ftp.activation.autoEnabled = true;
-    QTemporaryDir root;
-    QVERIFY(root.isValid());
-    EmbeddedFtpReceiveServer server;
-    DeviceOperationsController controller({[&](const QString&) { return &board; },
-                                           [&](const QString&) { return &ftp; }});
-    Rv1126bDeviceManagementDialog dialog(QStringLiteral("device-a"), &controller,
-        Rv1126bDeviceManagementDialog::InitialPage::FtpConfig, nullptr, true, &server);
-    dialog.show();
-    QCoreApplication::processEvents();
-
-    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpRootEdit"))->setText(root.path());
-    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpHostEdit"))->setText(QStringLiteral("127.0.0.1"));
-    QCOMPARE(dialog.findChild<QLineEdit*>(QStringLiteral("localFtpTargetIdEdit"))->text(), QStringLiteral("pc_127_0_0_1"));
-    dialog.findChild<QLineEdit*>(QStringLiteral("localFtpTargetIdEdit"))->setText(QStringLiteral("pc_test_bay"));
-    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPortSpin"))->setValue(22110);
-    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPassiveStartSpin"))->setValue(22111);
-    dialog.findChild<QSpinBox*>(QStringLiteral("localFtpPassiveEndSpin"))->setValue(22120);
-    const QString password = dialog.findChild<QLineEdit*>(QStringLiteral("localFtpPasswordEdit"))->text();
-
-    QTest::mouseClick(dialog.findChild<QPushButton*>(QStringLiteral("localFtpSaveTargetButton")), Qt::LeftButton);
-
-    QVERIFY(server.isListening());
-    QCOMPARE(ftp.saveCount, 1);
-    const auto local = std::find_if(ftp.lastUpdate.targets.cbegin(), ftp.lastUpdate.targets.cend(), [](const FtpTargetUpdate& target) {
-        return target.id == QStringLiteral("pc_test_bay");
-    });
-    QVERIFY(local != ftp.lastUpdate.targets.cend());
-    QVERIFY(local->enabled);
-    QCOMPARE(local->host, QStringLiteral("127.0.0.1"));
-    QCOMPARE(local->port, static_cast<quint16>(22110));
-    QCOMPARE(local->user, QStringLiteral("upload"));
-    QCOMPARE(local->remoteDir, QStringLiteral("/vehicle_events"));
-    QVERIFY(local->passive);
-    QCOMPARE(local->passwordAction.value, FtpPasswordAction::Replace);
-    QVERIFY(local->replacementPassword.has_value());
-    QCOMPARE(*local->replacementPassword, password);
+                .contains(QStringLiteral("设备离线")));
+    QVERIFY(!tabs->isTabEnabled(0));
+    QVERIFY(!tabs->isTabEnabled(1));
+    QVERIFY(!tabs->isTabEnabled(2));
 }
 
 QTEST_MAIN(DeviceOperationsUiTest)

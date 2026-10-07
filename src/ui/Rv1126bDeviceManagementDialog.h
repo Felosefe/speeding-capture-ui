@@ -10,16 +10,11 @@
 
 class QCheckBox;
 class QComboBox;
-class QDateTimeEdit;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QPushButton;
-class QJsonObject;
 class QSpinBox;
 class QTabWidget;
-class QTableWidget;
-class QTimer;
 
 namespace rv1126b {
 class EmbeddedFtpReceiveServer;
@@ -41,7 +36,8 @@ class Rv1126bDeviceManagementDialog final : public QDialog
     Q_OBJECT
 
 public:
-    enum class InitialPage { Evidence, Time, EventSync, Isp, FtpConfig, FtpTasks };
+    /* 只剩三个页签：展示配置 / 时间 / 事件同步。ISP、FTP 配置、FTP 历史任务已删除。 */
+    enum class InitialPage { Evidence, Time, EventSync };
 
     explicit Rv1126bDeviceManagementDialog(
         const QString& deviceId,
@@ -72,41 +68,10 @@ private:
     /* 目标电脑（指定 IP / UNC 共享）的选择与保存 */
     void browseEventSyncTargetFolder();
     void applyEventSyncTargetFolder();
-    QWidget* createIspPage();
-    QWidget* createFtpConfigPage();
-    QWidget* createFtpTasksPage();
     void connectController();
     void showError(const QString& code, const QString& message);
     void applyEvidence(const rv1126b::EvidenceConfigDto& config);
     void applyTime(const rv1126b::TimeStatusDto& time);
-    void applyFtpConfig(const rv1126b::FtpConfigSnapshotDto& config);
-    void addFtpTargetRow(const std::optional<rv1126b::FtpTargetSnapshotDto>& target = std::nullopt);
-    rv1126b::FtpConfigUpdate collectFtpConfig() const;
-    bool validateFtpRowsInline();
-    void clearPasswordEditors();
-    void applyFtpControl(const rv1126b::FtpControlDto& control);
-    void applyTaskPage(const rv1126b::FtpTaskPageDto& page, const QString& requestedCursor);
-    void applyTaskDetail(const rv1126b::FtpTaskDetailDto& detail);
-    void applyLocalTaskSnapshots(const QVector<rv1126b::StoredFtpTask>& tasks);
-    void applyLocalTaskDetail(const rv1126b::StoredFtpTask& task);
-    void createTask();
-    void refreshTasks();
-    void updateTaskRefreshState();
-    void startLocalFtpReceiver();
-    void stopLocalFtpReceiver();
-    void applyLocalFtpTarget(bool saveAndEnable);
-    void updateLocalFtpReceiverState();
-    void refreshIspConfig();
-    void saveCurrentIspConfig();
-    void clearIspConfig();
-    void applyIspConfigJson(const QJsonObject& config, int action = 0);
-    // applyIspConfigJson 的动作类型：0=刚读取，1=刚保存为开机默认，2=刚取消覆盖。
-    enum { IspRefresh = 0, IspSaveCurrent = 1, IspClear = 2 };
-    QString defaultLocalFtpAddress() const;
-    QString defaultLocalFtpTargetId(const QString& host) const;
-    int localFtpTargetRow() const;
-    void syncLocalFtpTargetIdFromHost();
-    void writeLocalFtpTargetRow();
     QString defaultEventStorageRoot() const;
     QString currentEventStorageRoot() const;
     // 「一键拉回本机文件夹」：按板端 cursor 翻页读事件 + 详情，写成用户可读资料包。
@@ -129,14 +94,14 @@ private:
     void downloadNextExportFile();
     void handleExportFileDownloaded(rv1126b::ApiResult<rv1126b::EvidenceDownloadResult> result);
     void finishEventExport();
-    void showRevisionConflict(const rv1126b::FtpConfigSnapshotDto& remote,
-                              const rv1126b::FtpConfigUpdate& local,
-                              const QStringList& passwordTargetIds);
-    QString conflictSummary(const rv1126b::FtpConfigSnapshotDto& remote,
-                            const rv1126b::FtpConfigUpdate& local) const;
 
     QString deviceId_;
     rv1126b::DeviceOperationsController* controller_ = nullptr;
+    /*
+     * 内置 FTP 接收服务与本地接收目录：ISP / FTP 配置 / FTP 历史任务三页删掉以后，
+     * 这个对话框已经不用它们了。构造参数与成员暂时保留，因为 MainWindow 和
+     * Rv1126bApplicationRuntime 的依赖装配仍在提供它们（清服务层是另一项独立重构）。
+     */
     rv1126b::EmbeddedFtpReceiveServer* ftpReceiveServer_ = nullptr;
     rv1126b::EventSyncService* eventSyncService_ = nullptr;
     rv1126b::IBoardApiClient* boardApi_ = nullptr;
@@ -223,55 +188,6 @@ private:
     int exportFailed_ = 0;
     bool exportInFlight_ = false;
 
-    QLabel* ispStatus_ = nullptr;
-    QLabel* ispCurrentLabel_ = nullptr;
-    QLabel* ispPersistedLabel_ = nullptr;
-    QPushButton* ispRefreshButton_ = nullptr;
-    QPushButton* ispSaveCurrentButton_ = nullptr;
-    QPushButton* ispClearButton_ = nullptr;
-
-    QLabel* ftpRevisionLabel_ = nullptr;
-    QSpinBox* retryMaxSpin_ = nullptr;
-    QSpinBox* retryIntervalSpin_ = nullptr;
-    QSpinBox* connectTimeoutSpin_ = nullptr;
-    QSpinBox* transferTimeoutSpin_ = nullptr;
-    QSpinBox* scanIntervalSpin_ = nullptr;
-    QTableWidget* ftpTargetsTable_ = nullptr;
-    QCheckBox* autoEnabledCheck_ = nullptr;
-    QComboBox* autoScopeCombo_ = nullptr;
-    QLabel* ftpStatus_ = nullptr;
-    QPushButton* saveFtpButton_ = nullptr;
-    QString ftpRevision_;
-    QLineEdit* localFtpRootEdit_ = nullptr;
-    QLineEdit* localFtpHostEdit_ = nullptr;
-    QLineEdit* localFtpTargetIdEdit_ = nullptr;
-    QSpinBox* localFtpPortSpin_ = nullptr;
-    QSpinBox* localFtpPassiveStartSpin_ = nullptr;
-    QSpinBox* localFtpPassiveEndSpin_ = nullptr;
-    QLineEdit* localFtpUserEdit_ = nullptr;
-    QLineEdit* localFtpPasswordEdit_ = nullptr;
-    QLabel* localFtpStatus_ = nullptr;
-    QPushButton* localFtpStartButton_ = nullptr;
-    QPushButton* localFtpStopButton_ = nullptr;
-    bool localFtpTargetIdAuto_ = true;
-
-    QDateTimeEdit* taskStartEdit_ = nullptr;
-    QDateTimeEdit* taskEndEdit_ = nullptr;
-    QListWidget* taskTargets_ = nullptr;
-    QTableWidget* taskTable_ = nullptr;
-    QTableWidget* taskDetailTable_ = nullptr;
-    QPushButton* previousTasksButton_ = nullptr;
-    QPushButton* nextTasksButton_ = nullptr;
-    QPushButton* retryTaskButton_ = nullptr;
-    QPushButton* createTaskButton_ = nullptr;
-    QLabel* taskPageLabel_ = nullptr;
-    QTimer* taskRefreshTimer_ = nullptr;
-    QStringList taskPageCursors_ {QString()};
-    int taskPageIndex_ = 0;
-    std::optional<QString> nextTaskCursor_;
-    QString selectedTaskId_;
-    rv1126b::FtpTaskState selectedTaskState_ = rv1126b::FtpTaskState::Unknown;
-    QVector<rv1126b::StoredFtpTask> localTaskSnapshots_;
     bool deviceOnline_ = true;
 };
 

@@ -1614,8 +1614,7 @@ void MainWindow::openDeviceConfig()
             return true;
         };        Rv1126bDeviceManagementDialog dialog(
             device->id, operationsController_,
-            online ? Rv1126bDeviceManagementDialog::InitialPage::Evidence
-                   : Rv1126bDeviceManagementDialog::InitialPage::FtpTasks,
+            Rv1126bDeviceManagementDialog::InitialPage::Evidence,
             this, online, ftpReceiveServer_,
             QDir(currentSystemSettings_.storage.rootPath).filePath(QStringLiteral("rv1126b/ftp-inbox")),
             eventSyncForDevice_ ? eventSyncForDevice_(device->id) : nullptr,
