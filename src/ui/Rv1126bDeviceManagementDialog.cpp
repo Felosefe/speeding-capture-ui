@@ -1763,7 +1763,31 @@ void Rv1126bDeviceManagementDialog::handleExportEventDetail(
                << csvEscape(QDir(exportRunRoot_).relativeFilePath(folder)) << '\n';
     }
 
+    /*
+     * 2026-10-07：只下载缺的文件，跳过已经有的。
+     * 判据是"存在且非空"——所以崩在写一半的残缺文件不会被误认为已完成；
+     * 全部文件都在时整条事件跳过、一个字节都不下载，重复拉取第二次几乎瞬间完成。
+     * 之前崩溃留下的那批只有 summary.txt 的目录，会因为缺图/缺 JSON 在这里被自动补全。
+     */
+    {
+        QVector<ExportFile> missingFiles;
+        for (const ExportFile& file : std::as_const(exportFiles_)) {
+            const QFileInfo fileInfo(file.finalPath);
+            if (fileInfo.exists() && fileInfo.size() > 0) {
+                continue;
+            }
+            missingFiles.append(file);
+        }
+        exportFiles_ = missingFiles;
+    }
+    if (exportFiles_.isEmpty()) {
+        ++exportSucceeded_;
+        ++exportEventIndex_;
+        exportNextEvent();
+        return;
+    }
     downloadNextExportFile();
+
 }
 
 void Rv1126bDeviceManagementDialog::downloadNextExportFile()
