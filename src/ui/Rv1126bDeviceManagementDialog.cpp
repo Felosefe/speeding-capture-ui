@@ -487,6 +487,38 @@ QWidget* Rv1126bDeviceManagementDialog::createEventSyncPage()
     targetHint->setStyleSheet(QStringLiteral("color:#44515f;"));
     pullLayout->addWidget(targetHint);
     pullLayout->addWidget(pullRow);
+    /*
+     * 2026-10-07：持续同步（用户要的形态）。
+     * 打开后，板端每同步到一条新事件，DetectionResultWriter 的 auto 模式就会往
+     * 上面那个文件夹写一整套（evidence.jpg / event.json / detail.json / ocr.json /
+     * summary.txt），不需要点任何按钮；配合"目录名跨运行稳定"，重复执行只会补缺、
+     * 不会重建。目标文件夹沿用上面的"目标电脑"，所以本机和 \\对方IP\共享名 都支持。
+     */
+    auto* autoWriteCheck = new QCheckBox(
+        QStringLiteral("持续同步到上面这个文件夹（板端每出一条检测结果就写一套）"), pullBox);
+    autoWriteCheck->setChecked(true);
+    connect(autoWriteCheck, &QCheckBox::toggled, this, [this](bool on) {
+        if (!detectionPull_.writer) {
+            return;
+        }
+        detectionPull_.writer->setAutoEnabled(on);
+        if (eventSyncTargetEdit_) {
+            detectionPull_.writer->setTargetRoot(eventSyncTargetEdit_->text().trimmed());
+        }
+        if (boardPullStatus_) {
+            boardPullStatus_->setText(on
+                ? QStringLiteral("持续同步：开 —— 新事件会自动写入上面这个文件夹")
+                : QStringLiteral("持续同步：关 —— 只保留手动「开始拉取到本机」"));
+        }
+    });
+    pullLayout->addWidget(autoWriteCheck);
+    if (detectionPull_.writer) {
+        detectionPull_.writer->setAutoEnabled(true);
+        if (eventSyncTargetEdit_) {
+            detectionPull_.writer->setTargetRoot(eventSyncTargetEdit_->text().trimmed());
+        }
+    }
+
 
     const bool pullAvailable = detectionPull_.repository && detectionPull_.writer && boardApi_;
     boardPullButton_->setEnabled(pullAvailable);
